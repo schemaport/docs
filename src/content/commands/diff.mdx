@@ -39,9 +39,15 @@ so there is no target to select, and nothing in the config file applies:
 
 ```console
 $ schemaport diff v1 v2 --targets openai
-✗ Unknown option '--targets'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- "--targets" (run `schemaport diff --help`)
-Run `schemaport diff --help` for usage.
 ```
+
+It exits `2` and prints:
+
+> ✗ Unknown option '--targets'. To specify a positional argument starting with a
+> '-', place it at the end of the command after '--', as in '-- "--targets"
+> (run `schemaport diff --help`)
+>
+> Run `schemaport diff --help` for usage.
 
 <Note>
 `diff` ignores config *values*, but the config file is still loaded before the
@@ -97,7 +103,7 @@ mistake. The full classification is on
 
 ## Machine-readable output
 
-```json
+```json wrap
 {
   "command": "diff",
   "schemaPortVersion": "0.1.0",

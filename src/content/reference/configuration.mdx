@@ -52,9 +52,14 @@ Any other key is a usage error, as is a value of the wrong type:
 
 ```console
 $ schemaport check tools --targets mcp
-✗ Unknown key `provider` in /private/tmp/sp-cfg/schemaport.config.json. Valid keys are: schemas, targets, output, allowLossy.
-Run `schemaport check --help` for usage.
 ```
+
+It exits `2` and prints:
+
+> ✗ Unknown key `provider` in `schemaport.config.json`. Valid keys are:
+> schemas, targets, output, allowLossy.
+>
+> Run `schemaport check --help` for usage.
 
 Paths in the config file are resolved relative to your **working directory**, not
 to the location of the config file.

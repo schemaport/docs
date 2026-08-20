@@ -18,7 +18,7 @@ your schema, and it needs no API key.
 
 ## Syntax
 
-```sh
+```sh wrap
 schemaport compile <path...> --out <dir> [--targets <ids>] [--format text|json] [--allow-lossy] [--config <file>]
 ```
 
@@ -56,63 +56,81 @@ produces byte-identical output.
 
 ```console
 $ schemaport compile tools --out generated
-Tool: refund_order
+```
 
-OpenAI
-✓ generated/openai/refund-order.json
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as the OpenAI `parameters` field.
-  • [safe] enabled-strict-mode at inputSchema
-    Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.
-  • [safe] converted-optional-property-to-nullable at inputSchema.properties.amount
-    Made `amount` required and added `"null"` to its type; strict mode has no optional properties.
-  • [safe] converted-optional-property-to-nullable at inputSchema.properties.refundMethod
-    Made `refundMethod` required and added `"null"` to its type; strict mode has no optional properties.
-  • [safe] added-additional-properties-false at inputSchema.additionalProperties
-    Added `additionalProperties: false`, which strict mode requires on every object.
-⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
-  Path: inputSchema.properties.amount
-⚠ After compilation the model may send `refundMethod: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
-  Path: inputSchema.properties.refundMethod
+Here is what it reports for `Tool: refund_order`, grouped by target. Each
+transformation is tagged `[safe]` or `[lossy]` and carries the canonical schema
+path it applied to; the `⚠` rows are diagnostics that survived compilation —
+things the target accepts but represents or enforces differently.
 
-Anthropic
-✓ generated/anthropic/refund-order.json
-  • [safe] renamed-input-schema-field at inputSchema
-    Emitted the canonical `inputSchema` as the Messages API field `input_schema`.
-⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
-  Path: inputSchema.properties.amount.minimum
+### OpenAI
 
-Gemini
-✓ generated/gemini/refund-order.json
-  • [safe] added-enum-format at inputSchema.properties.refundMethod.format
-    Added `format: "enum"`, which the Gemini reference uses to mark an enumerated field.
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
-  • [safe] normalized-type-case at inputSchema
-    Emitted 4 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
-⚠ `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate function calls with constrained decoding. Under the default `AUTO` mode these guide the model rather than bind it.
-  Path: inputSchema.properties.amount
+Wrote `generated/openai/refund-order.json`.
 
-MCP
-✓ generated/mcp/refund-order.json
-  No transformations.
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as the OpenAI `parameters` field. |
+| `[safe]` | `enabled-strict-mode` | `inputSchema` | Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching. |
+| `[safe]` | `converted-optional-property-to-nullable` | `inputSchema.properties.amount` | Made `amount` required and added `"null"` to its type; strict mode has no optional properties. |
+| `[safe]` | `converted-optional-property-to-nullable` | `inputSchema.properties.refundMethod` | Made `refundMethod` required and added `"null"` to its type; strict mode has no optional properties. |
+| `[safe]` | `added-additional-properties-false` | `inputSchema.additionalProperties` | Added `additionalProperties: false`, which strict mode requires on every object. |
 
+<Badge variant="warning">2 warnings survived</Badge>
+
+| | Warning | Path |
+|---|---|---|
+| ⚠ | After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied". | `inputSchema.properties.amount` |
+| ⚠ | After compilation the model may send `refundMethod: null` instead of omitting the property. | `inputSchema.properties.refundMethod` |
+
+### Anthropic
+
+Wrote `generated/anthropic/refund-order.json`.
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `renamed-input-schema-field` | `inputSchema` | Emitted the canonical `inputSchema` as the Messages API field `input_schema`. |
+
+<Badge variant="warning">1 warning shown</Badge>
+
+| | Warning | Path |
+|---|---|---|
+| ⚠ | `minimum` is never enforced. It is ignored in default tool use and is on the documented "Not supported" list for `strict: true`. | `inputSchema.properties.amount.minimum` |
+
+### Gemini
+
+Wrote `generated/gemini/refund-order.json`.
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `added-enum-format` | `inputSchema.properties.refundMethod.format` | Added `format: "enum"`, which the Gemini reference uses to mark an enumerated field. |
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as `FunctionDeclaration.parameters`. |
+| `[safe]` | `normalized-type-case` | `inputSchema` | Emitted 4 `type` values as Gemini `Type` enum names (`string` -> `STRING`). |
+
+<Badge variant="warning">1 warning survived</Badge>
+
+| | Warning | Path |
+|---|---|---|
+| ⚠ | `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate calls with constrained decoding. Under the default `AUTO` mode it guides the model rather than binding it. | `inputSchema.properties.amount` |
+
+### MCP
+
+Wrote `generated/mcp/refund-order.json`. No transformations.
+
+```console
 Result: 8 files written to generated, 0 refusals
 ```
 
+<Note>
 The `search_orders` blocks and one Anthropic warning are trimmed above; the
-`Result:` line counts the whole run.
-
-Each `•` line is one [transformation](/concepts/safe-and-lossy-compilation),
-tagged `[safe]` or `[lossy]`, with the canonical schema path it applied to. The
-`⚠` lines are diagnostics that survived compilation — things the target accepts
-but represents or enforces differently.
+`Result:` line counts the whole run, which is why it reports 8 files for the two
+tools in `tools/`.
+</Note>
 
 ### What actually changed
 
 The canonical tool:
 
-```json
+```json wrap
 {
   "name": "refund_order",
   "description": "Refunds all or part of an order",
@@ -173,33 +191,43 @@ represent a constraint, the compilation for that one tool/target pair is refused
 
 ```console
 $ schemaport compile tools --targets openai,gemini --out generated
-Tool: tag_resource
+```
 
-OpenAI
-✗ Refused. Nothing was written for this target.
-  Compiling for openai would weaken this schema: dropped-additional-properties-schema at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
-  Path: inputSchema
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as the OpenAI `parameters` field.
-  • [safe] enabled-strict-mode at inputSchema
-    Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.
-  • [lossy] dropped-additional-properties-schema at inputSchema.properties.tags.additionalProperties
-    Replaced the `additionalProperties` value schema with `false`; the open typed map is gone.
-  • [safe] added-additional-properties-false at inputSchema.additionalProperties
-    Added `additionalProperties: false`, which strict mode requires on every object.
-  Re-run with --allow-lossy to accept the weaker output.
+For `Tool: tag_resource`, both targets report
+`✗ Refused. Nothing was written for this target.`
 
-Gemini
-✗ Refused. Nothing was written for this target.
-  Compiling for gemini would weaken this schema: dropped-additional-properties at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
-  Path: inputSchema
-  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
-    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
-  • [safe] normalized-type-case at inputSchema
-    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+### OpenAI
 
+<Badge variant="danger">Refused</Badge>
+
+Compiling for `openai` would weaken this schema:
+`dropped-additional-properties-schema` at
+`inputSchema.properties.tags.additionalProperties`, reported at path
+`inputSchema`. Re-run with `--allow-lossy` to accept the weaker output.
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as the OpenAI `parameters` field. |
+| `[safe]` | `enabled-strict-mode` | `inputSchema` | Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching. |
+| `[lossy]` | `dropped-additional-properties-schema` | `inputSchema.properties.tags.additionalProperties` | Replaced the `additionalProperties` value schema with `false`; the open typed map is gone. |
+| `[safe]` | `added-additional-properties-false` | `inputSchema.additionalProperties` | Added `additionalProperties: false`, which strict mode requires on every object. |
+
+### Gemini
+
+<Badge variant="danger">Refused</Badge>
+
+Compiling for `gemini` would weaken this schema:
+`dropped-additional-properties` at
+`inputSchema.properties.tags.additionalProperties`, reported at path
+`inputSchema`. Re-run with `--allow-lossy` to accept the weaker output.
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[lossy]` | `dropped-additional-properties` | `inputSchema.properties.tags.additionalProperties` | Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted. |
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as `FunctionDeclaration.parameters`. |
+| `[safe]` | `normalized-type-case` | `inputSchema` | Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`). |
+
+```console
 Result: 0 files written to generated, 2 refusals
 ```
 
@@ -217,28 +245,32 @@ the regression visible in review.
 
 ```console
 $ schemaport compile tools --targets openai,gemini --out generated --allow-lossy
-Tool: tag_resource
+```
 
-OpenAI
-✓ generated/openai/tag-resource.json
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as the OpenAI `parameters` field.
-  • [safe] enabled-strict-mode at inputSchema
-    Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.
-  • [lossy] dropped-additional-properties-schema at inputSchema.properties.tags.additionalProperties
-    Replaced the `additionalProperties` value schema with `false`; the open typed map is gone.
-  • [safe] added-additional-properties-false at inputSchema.additionalProperties
-    Added `additionalProperties: false`, which strict mode requires on every object.
+Same `Tool: tag_resource`, same transformations — but now both targets write.
 
-Gemini
-✓ generated/gemini/tag-resource.json
-  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
-    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
-  • [safe] normalized-type-case at inputSchema
-    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+### OpenAI
 
+Wrote `generated/openai/tag-resource.json`.
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as the OpenAI `parameters` field. |
+| `[safe]` | `enabled-strict-mode` | `inputSchema` | Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching. |
+| `[lossy]` | `dropped-additional-properties-schema` | `inputSchema.properties.tags.additionalProperties` | Replaced the `additionalProperties` value schema with `false`; the open typed map is gone. |
+| `[safe]` | `added-additional-properties-false` | `inputSchema.additionalProperties` | Added `additionalProperties: false`, which strict mode requires on every object. |
+
+### Gemini
+
+Wrote `generated/gemini/tag-resource.json`.
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[lossy]` | `dropped-additional-properties` | `inputSchema.properties.tags.additionalProperties` | Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted. |
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as `FunctionDeclaration.parameters`. |
+| `[safe]` | `normalized-type-case` | `inputSchema` | Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`). |
+
+```console
 Result: 2 files written to generated, 0 refusals
 ```
 

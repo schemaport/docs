@@ -62,19 +62,24 @@ the field does not work.
 
 ```console
 $ schemaport compile ./examples/refund-order/v1/refund-order.json --targets gemini --out /tmp/prov-gemini
-Tool: refund_order
+```
 
-Gemini
-✓ /tmp/prov-gemini/gemini/refund-order.json
-  • [safe] added-enum-format at inputSchema.properties.refundMethod.format
-    Added `format: "enum"`, which the Gemini reference uses to mark an enumerated field.
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
-  • [safe] normalized-type-case at inputSchema
-    Emitted 4 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
-⚠ `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate function calls with constrained decoding. Under the default `AUTO` mode these guide the model rather than bind it.
-  Path: inputSchema.properties.amount
+For `Tool: refund_order`, Gemini wrote
+`/tmp/prov-gemini/gemini/refund-order.json`:
 
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `added-enum-format` | `inputSchema.properties.refundMethod.format` | Added `format: "enum"`, which the Gemini reference uses to mark an enumerated field. |
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as `FunctionDeclaration.parameters`. |
+| `[safe]` | `normalized-type-case` | `inputSchema` | Emitted 4 `type` values as Gemini `Type` enum names (`string` -> `STRING`). |
+
+<Badge variant="warning">1 warning survived</Badge>
+
+| | Warning | Path |
+|---|---|---|
+| ⚠ | `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate calls with constrained decoding. Under the default `AUTO` mode it guides the model rather than binding it. | `inputSchema.properties.amount` |
+
+```console
 Result: 1 file written to /tmp/prov-gemini, 0 refusals
 ```
 
@@ -241,20 +246,23 @@ lossy means:
 
 ```console
 $ schemaport compile ./examples/lossy --targets gemini --out /tmp/pl-g
-Tool: tag_resource
+```
 
-Gemini
-✗ Refused. Nothing was written for this target.
-  Compiling for gemini would weaken this schema: dropped-additional-properties at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
-  Path: inputSchema
-  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
-    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
-  • [safe] normalized-type-case at inputSchema
-    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
-  Re-run with --allow-lossy to accept the weaker output.
+<Badge variant="danger">Refused</Badge>
 
+For `Tool: tag_resource`, Gemini reports
+`✗ Refused. Nothing was written for this target.` Compiling for `gemini` would
+weaken this schema: `dropped-additional-properties` at
+`inputSchema.properties.tags.additionalProperties`, reported at path
+`inputSchema`. Re-run with `--allow-lossy` to accept the weaker output.
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[lossy]` | `dropped-additional-properties` | `inputSchema.properties.tags.additionalProperties` | Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted. |
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as `FunctionDeclaration.parameters`. |
+| `[safe]` | `normalized-type-case` | `inputSchema` | Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`). |
+
+```console
 Result: 0 files written to /tmp/pl-g, 1 refusal
 ```
 
@@ -289,7 +297,7 @@ a schema rejection.
 The default is the cheapest model on the Gemini API pricing page whose model
 card lists "Function calling: Supported". Override it per run:
 
-```bash
+```bash wrap
 SCHEMAPORT_GEMINI_MODEL=gemini-3.7-flash schemaport probe ./tools/refund_order.json --targets gemini
 ```
 

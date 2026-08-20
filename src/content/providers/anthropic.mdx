@@ -58,17 +58,23 @@ constraints you gave up. There is no option on this adapter to do that for you.
 
 ```console
 $ schemaport compile ./examples/refund-order/v1/refund-order.json --targets anthropic --out /tmp/prov-anthropic
-Tool: refund_order
+```
 
-Anthropic
-✓ /tmp/prov-anthropic/anthropic/refund-order.json
-  • [safe] renamed-input-schema-field at inputSchema
-    Emitted the canonical `inputSchema` as the Messages API field `input_schema`.
-⚠ Anthropic accepts this schema in full but does not validate tool inputs against it by default. The schema is rendered into the tool-use system prompt as guidance, so Claude may return mistyped values or omit required properties. Input validation requires `strict: true`, which SchemaPort does not emit because the strict subset rejects several keywords in this schema family.
-  Path: inputSchema
-⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
-  Path: inputSchema.properties.amount.minimum
+For `Tool: refund_order`, Anthropic wrote
+`/tmp/prov-anthropic/anthropic/refund-order.json`:
 
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `renamed-input-schema-field` | `inputSchema` | Emitted the canonical `inputSchema` as the Messages API field `input_schema`. |
+
+<Badge variant="warning">2 warnings survived</Badge>
+
+| | Warning | Path |
+|---|---|---|
+| ⚠ | Anthropic accepts this schema in full but does not validate tool inputs against it by default, so Claude may return mistyped values or omit required properties. | `inputSchema` |
+| ⚠ | `minimum` is never enforced. It is ignored in default tool use and is on the documented "Not supported" list for `strict: true`. | `inputSchema.properties.amount.minimum` |
+
+```console
 Result: 1 file written to /tmp/prov-anthropic, 0 refusals
 ```
 

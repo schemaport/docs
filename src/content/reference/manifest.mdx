@@ -79,9 +79,11 @@ An empty manifest is a real result, and in a pull request it is a very loud one.
 
 Compiling the refund-order example for all four targets. Trimmed for length: the
 `search_orders` entry, the `gemini` block, and some individual transformations
-and warnings. Nothing else is changed.
+and warnings. Two `message` strings are cut short at a `…` — the real values run
+to full sentences, and you can read them in full on
+[Diagnostics](/reference/diagnostics). Nothing else is changed.
 
-```json
+```json wrap
 {
   "schemaPortVersion": "0.1.0",
   "targets": [
@@ -109,7 +111,7 @@ and warnings. Nothing else is changed.
             {
               "code": "anthropic/constraint-not-enforced",
               "path": "inputSchema.properties.amount.minimum",
-              "message": "`minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented \"Not supported\" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee."
+              "message": "`minimum` is never enforced by Anthropic. …"
             }
           ]
         },
@@ -150,7 +152,7 @@ and warnings. Nothing else is changed.
             {
               "code": "openai/nullable-instead-of-omitted",
               "path": "inputSchema.properties.amount",
-              "message": "After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as \"not supplied\" in the handler for `refund_order`."
+              "message": "After compilation the model may send `amount: null` …"
             }
           ]
         }

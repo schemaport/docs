@@ -41,25 +41,27 @@ Compiling the `refund_order` example:
 
 ```console
 $ schemaport compile ./examples/refund-order/v1/refund-order.json --targets openai --out /tmp/prov-openai
-Tool: refund_order
+```
 
-OpenAI
-✓ /tmp/prov-openai/openai/refund-order.json
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as the OpenAI `parameters` field.
-  • [safe] enabled-strict-mode at inputSchema
-    Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.
-  • [safe] converted-optional-property-to-nullable at inputSchema.properties.amount
-    Made `amount` required and added `"null"` to its type; strict mode has no optional properties.
-  • [safe] converted-optional-property-to-nullable at inputSchema.properties.refundMethod
-    Made `refundMethod` required and added `"null"` to its type; strict mode has no optional properties.
-  • [safe] added-additional-properties-false at inputSchema.additionalProperties
-    Added `additionalProperties: false`, which strict mode requires on every object.
-⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
-  Path: inputSchema.properties.amount
-⚠ After compilation the model may send `refundMethod: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
-  Path: inputSchema.properties.refundMethod
+For `Tool: refund_order`, OpenAI wrote
+`/tmp/prov-openai/openai/refund-order.json`:
 
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as the OpenAI `parameters` field. |
+| `[safe]` | `enabled-strict-mode` | `inputSchema` | Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching. |
+| `[safe]` | `converted-optional-property-to-nullable` | `inputSchema.properties.amount` | Made `amount` required and added `"null"` to its type; strict mode has no optional properties. |
+| `[safe]` | `converted-optional-property-to-nullable` | `inputSchema.properties.refundMethod` | Made `refundMethod` required and added `"null"` to its type; strict mode has no optional properties. |
+| `[safe]` | `added-additional-properties-false` | `inputSchema.additionalProperties` | Added `additionalProperties: false`, which strict mode requires on every object. |
+
+<Badge variant="warning">2 warnings survived</Badge>
+
+| | Warning | Path |
+|---|---|---|
+| ⚠ | After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied". | `inputSchema.properties.amount` |
+| ⚠ | After compilation the model may send `refundMethod: null` instead of omitting the property. | `inputSchema.properties.refundMethod` |
+
+```console
 Result: 1 file written to /tmp/prov-openai, 0 refusals
 ```
 

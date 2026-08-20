@@ -93,10 +93,14 @@ broken file does not hide the rest of the directory:
 
 ```console
 $ schemaport check tools
-✗ tools/broken.json: SchemaPort does not support boolean subschemas. Use `{}` to accept any value, or remove the entry to disallow it.
-  Path: inputSchema.properties.tags
-✗ tools/broken.json: `name` must be at most 128 characters and contain no whitespace.
-  Path: name
+```
+
+| | Error | Path |
+|---|---|---|
+| ✗ | `tools/broken.json`: SchemaPort does not support boolean subschemas. Use `{}` to accept any value, or remove the entry to disallow it. | `inputSchema.properties.tags` |
+| ✗ | `tools/broken.json`: `name` must be at most 128 characters and contain no whitespace. | `name` |
+
+```console
 Result: 2 input errors
 ```
 
@@ -118,12 +122,24 @@ time, and fails when you point at the parent:
 
 ```console
 $ schemaport check tools
-✗ tools/v2/refund-order.json: Duplicate tool name `refund_order`, already defined in /private/tmp/sp-dup/tools/v1/refund-order.json.
-✗ tools/v2/search-orders.json: Duplicate tool name `search_orders`, already defined in /private/tmp/sp-dup/tools/v1/search-orders.json.
-✗ tools/v2/refund-order.json: Duplicate tool name `refund_order`, already defined in /private/tmp/sp-dup/tools/v1/refund-order.json.
-✗ tools/v2/search-orders.json: Duplicate tool name `search_orders`, already defined in /private/tmp/sp-dup/tools/v1/search-orders.json.
+```
+
+| | Error |
+|---|---|
+| ✗ | `tools/v2/refund-order.json`: Duplicate tool name `refund_order`, already defined in `tools/v1/refund-order.json`. |
+| ✗ | `tools/v2/search-orders.json`: Duplicate tool name `search_orders`, already defined in `tools/v1/search-orders.json`. |
+
+```console
 Result: 4 input errors
 ```
+
+<Note>
+  Each duplicate is reported twice — once while walking the directory and once
+  while merging the inputs — so two duplicated tools produce `4 input errors`.
+  The message also prints the already-defined path as an absolute path, while
+  the prefix on the same line is relative to your working directory. Both are
+  known rough edges in 0.1.0.
+</Note>
 
 Each duplicate appears twice: once from the directory walk, and once from the
 check that runs across all the paths on one command line. The path of the

@@ -20,7 +20,7 @@ It reads local files only. No API key, no network request.
 
 ## Syntax
 
-```sh
+```sh wrap
 schemaport check <path...> [--targets <ids>] [--format text|json] [--fail-on error|warning|never] [--config <file>]
 ```
 
@@ -40,48 +40,83 @@ recursively. You can omit the path entirely when `schemaport.config.json` sets
 
 ## A real run
 
-Running `check` over the two tools in the refund-order example, against all four
-targets:
+Run `check` over the refund-order example against all four targets:
 
 ```console
-$ schemaport check tools --targets openai,anthropic,gemini,mcp
-Tool: refund_order
-
-OpenAI
-✗ OpenAI strict mode requires `additionalProperties: false` on every object schema.
-  Path: inputSchema.additionalProperties
-  SchemaPort can compile this: Adds `additionalProperties: false`.
-  Docs: https://developers.openai.com/api/docs/guides/structured-outputs
-✗ Optional property `amount` is not allowed in OpenAI strict mode; every property must be listed in `required`.
-  Path: inputSchema.properties.amount
-  SchemaPort can compile this: Emits `amount` as required and nullable.
-  Docs: https://developers.openai.com/api/docs/guides/function-calling
-⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
-  Path: inputSchema.properties.amount
-  SchemaPort can compile this: Adds `"null"` to the type of `amount`; the key is always present.
-  Docs: https://developers.openai.com/api/docs/guides/function-calling
-
-Anthropic
-⚠ Anthropic accepts this schema in full but does not validate tool inputs against it by default. The schema is rendered into the tool-use system prompt as guidance, so Claude may return mistyped values or omit required properties. Input validation requires `strict: true`, which SchemaPort does not emit because the strict subset rejects several keywords in this schema family.
-  Path: inputSchema
-  SchemaPort can compile this: Emits the default (non-strict) tool definition, preserving the schema verbatim.
-  Docs: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
-
-Gemini
-⚠ `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate function calls with constrained decoding. Under the default `AUTO` mode these guide the model rather than bind it.
-  Path: inputSchema.properties.amount
-  SchemaPort can compile this: Emits the constraint unchanged.
-  Docs: https://ai.google.dev/gemini-api/docs/function-calling
-
-MCP
-✓ Compatible
-
-Result: 10 errors, 14 warnings
+$ schemaport check tools/refund-order.json --targets openai,anthropic,gemini,mcp
 ```
 
-The blocks for `search_orders` and several `refund_order` diagnostics are
-trimmed above; the `Result:` line counts every finding across every tool and
-target.
+Here is everything it reports for `refund_order`, grouped the way the CLI groups
+it. The `✗` and `⚠` markers are the ones printed in your terminal.
+
+### OpenAI
+
+<Badge variant="danger">3 errors</Badge>{" "}<Badge variant="warning">2 warnings</Badge>
+
+| | Finding | Path | What `compile` does |
+|---|---|---|---|
+| ✗ | Strict mode requires `additionalProperties: false` on every object schema. | `inputSchema.additionalProperties` | Adds `additionalProperties: false`. |
+| ✗ | Optional property `amount` is not allowed in strict mode; every property must be listed in `required`. | `inputSchema.properties.amount` | Emits `amount` as required and nullable. |
+| ✗ | Optional property `refundMethod` is not allowed in strict mode; every property must be listed in `required`. | `inputSchema.properties.refundMethod` | Emits `refundMethod` as required and nullable. |
+| ⚠ | After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied". | `inputSchema.properties.amount` | Adds `"null"` to the type; the key is always present. |
+| ⚠ | After compilation the model may send `refundMethod: null` instead of omitting the property. | `inputSchema.properties.refundMethod` | Adds `"null"` to the type; the key is always present. |
+
+Rules from [structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
+and [function calling](https://developers.openai.com/api/docs/guides/function-calling).
+
+Every error here is one `compile` fixes without weakening anything. That is the
+normal case for OpenAI: the canonical schema cannot be sent as written, and
+`schemaport compile` produces the version that can.
+
+### Anthropic
+
+<Badge variant="warning">2 warnings</Badge>
+
+| | Finding | Path | What `compile` does |
+|---|---|---|---|
+| ⚠ | Anthropic accepts this schema in full but does not validate tool inputs against it by default, so Claude may return mistyped values or omit required properties. | `inputSchema` | Emits the default (non-strict) tool definition, preserving the schema verbatim. |
+| ⚠ | `minimum` is never enforced. It is ignored in default tool use and is on the documented "Not supported" list for `strict: true`. | `inputSchema.properties.amount.minimum` | Preserved verbatim in `input_schema`. |
+
+Rules from [strict tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use)
+and [structured output limitations](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations).
+
+Nothing is dropped and nothing is rejected — but "accepted" is not "enforced",
+which is exactly the distinction `check` exists to surface.
+
+### Gemini
+
+<Badge variant="warning">1 warning</Badge>
+
+| | Finding | Path | What `compile` does |
+|---|---|---|---|
+| ⚠ | `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate calls with constrained decoding. Under the default `AUTO` mode it guides the model rather than binding it. | `inputSchema.properties.amount` | Emits the constraint unchanged. |
+
+Rules from [function calling](https://ai.google.dev/gemini-api/docs/function-calling).
+
+### MCP
+
+<Badge variant="success">Compatible</Badge>
+
+No findings. MCP defers to JSON Schema, so this tool needs nothing changed.
+
+### The summary line
+
+```console
+Result: 3 errors, 5 warnings
+$ echo $?
+1
+```
+
+`check` exits `1` because errors are present. That is correct and expected here:
+the canonical schema cannot be handed to OpenAI as written. Run
+[`compile`](/commands/compile) to produce the version that can, or see
+[exit codes](/reference/exit-codes) for tuning this in CI.
+
+<Note>
+  Running `check` over the whole `tools/` directory reports `10 errors, 14
+  warnings`, because it covers `search_orders` as well. The findings above are
+  for `refund_order` alone.
+</Note>
 
 ### Reading a finding
 
@@ -115,7 +150,7 @@ block before you change anything.
 `--format json` emits one document containing the provider `Diagnostic` objects
 verbatim:
 
-```json
+```json wrap
 {
   "command": "check",
   "schemaPortVersion": "0.1.0",
@@ -176,10 +211,14 @@ files would be worse than useless in CI:
 
 ```console
 $ schemaport check tools
-✗ tools/broken.json: SchemaPort does not support boolean subschemas. Use `{}` to accept any value, or remove the entry to disallow it.
-  Path: inputSchema.properties.tags
-✗ tools/broken.json: `name` must be at most 128 characters and contain no whitespace.
-  Path: name
+```
+
+| | Error | Path |
+|---|---|---|
+| ✗ | `tools/broken.json`: SchemaPort does not support boolean subschemas. Use `{}` to accept any value, or remove the entry to disallow it. | `inputSchema.properties.tags` |
+| ✗ | `tools/broken.json`: `name` must be at most 128 characters and contain no whitespace. | `name` |
+
+```console
 Result: 2 input errors
 ```
 

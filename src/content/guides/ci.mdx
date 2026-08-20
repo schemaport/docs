@@ -132,7 +132,7 @@ deliberately kept inside every provider's common subset.
 
 Here is `check` failing, on the example tool set shipped with the CLI:
 
-```console
+```console wrap
 $ schemaport check examples/refund-order/v1 --targets openai,anthropic,gemini,mcp
 Tool: refund_order
 
@@ -297,7 +297,7 @@ not that the provider said no — a missing key, an authentication failure, a
 stale model id, a rate limit, or a network problem. This is what a missing key
 actually looks like:
 
-```console
+```console wrap
 $ schemaport probe examples/refund-order/v1/refund-order.json --targets openai
 Tool: refund_order
 

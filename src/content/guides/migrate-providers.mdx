@@ -42,14 +42,19 @@ Here is the middle case, on a tool whose `tags` property is an open string map:
 
 ```console
 $ schemaport check examples/lossy --targets gemini
-Tool: tag_resource
+```
 
-Gemini
-✗ Gemini has no `additionalProperties` field, so the schema for extra properties cannot be sent. The compiled schema accepts extra properties of any shape.
-  Path: inputSchema.properties.tags.additionalProperties
-  SchemaPort can compile this with --allow-lossy: Drops the `additionalProperties` schema; extra properties become unconstrained.
-  Docs: https://ai.google.dev/gemini-api/docs/function-calling
+For `Tool: tag_resource`:
 
+<Badge variant="danger">1 error</Badge>
+
+| | Finding | Path | What `compile` does |
+|---|---|---|---|
+| ✗ | Gemini has no `additionalProperties` field, so the schema for extra properties cannot be sent. The compiled schema accepts extra properties of any shape. | `inputSchema.properties.tags.additionalProperties` | With `--allow-lossy`: drops the `additionalProperties` schema; extra properties become unconstrained. |
+
+Rules from [function calling](https://ai.google.dev/gemini-api/docs/function-calling).
+
+```console
 Result: 1 error, 0 warnings
 $ echo $?
 1
@@ -76,20 +81,23 @@ loss is **refused**: nothing is written for that pair, and the run exits `1`.
 
 ```console
 $ schemaport compile examples/lossy --targets gemini --out generated
-Tool: tag_resource
+```
 
-Gemini
-✗ Refused. Nothing was written for this target.
-  Compiling for gemini would weaken this schema: dropped-additional-properties at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
-  Path: inputSchema
-  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
-    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
-  • [safe] normalized-type-case at inputSchema
-    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
-  Re-run with --allow-lossy to accept the weaker output.
+<Badge variant="danger">Refused</Badge>
 
+For `Tool: tag_resource`, Gemini reports
+`✗ Refused. Nothing was written for this target.` Compiling for `gemini` would
+weaken this schema: `dropped-additional-properties` at
+`inputSchema.properties.tags.additionalProperties`, reported at path
+`inputSchema`. Re-run with `--allow-lossy` to accept the weaker output.
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[lossy]` | `dropped-additional-properties` | `inputSchema.properties.tags.additionalProperties` | Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted. |
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as `FunctionDeclaration.parameters`. |
+| `[safe]` | `normalized-type-case` | `inputSchema` | Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`). |
+
+```console
 Result: 0 files written to generated, 1 refusal
 $ echo $?
 1
@@ -131,14 +139,18 @@ So a schema that produced five OpenAI errors reports zero errors on Anthropic:
 
 ```console
 $ schemaport check examples/refund-order/v1/refund-order.json --targets anthropic
-Tool: refund_order
+```
 
-Anthropic
-⚠ Anthropic accepts this schema in full but does not validate tool inputs against it by default. The schema is rendered into the tool-use system prompt as guidance, so Claude may return mistyped values or omit required properties. Input validation requires `strict: true`, which SchemaPort does not emit because the strict subset rejects several keywords in this schema family.
-  Path: inputSchema
-⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
-  Path: inputSchema.properties.amount.minimum
+For `Tool: refund_order`:
 
+<Badge variant="warning">2 warnings</Badge>
+
+| | Finding | Path |
+|---|---|---|
+| ⚠ | Anthropic accepts this schema in full but does not validate tool inputs against it by default, so Claude may return mistyped values or omit required properties. | `inputSchema` |
+| ⚠ | `minimum` is never enforced. It is ignored in default tool use and is on the documented "Not supported" list for `strict: true`. | `inputSchema.properties.amount.minimum` |
+
+```console
 Result: 0 errors, 2 warnings
 $ echo $?
 0

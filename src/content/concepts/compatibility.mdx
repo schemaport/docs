@@ -30,12 +30,11 @@ Every diagnostic carries the provider, the tool, a severity, a stable code, a
 one-line message, the exact schema path, what compilation will do about it, and
 usually a link to the official provider page the rule came from:
 
-```text
-⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
-  Path: inputSchema.properties.amount.minimum
-  SchemaPort can compile this: Preserved verbatim in `input_schema`.
-  Docs: https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations
-```
+| | Finding | Path | What `compile` does |
+|---|---|---|---|
+| ⚠ | `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee. | `inputSchema.properties.amount.minimum` | Preserved verbatim in `input_schema`. |
+
+Rules from [JSON Schema limitations](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations).
 
 The full field-by-field shape is in [Diagnostics](/reference/diagnostics).
 
@@ -50,11 +49,9 @@ An error does not necessarily mean you are stuck. Most errors are things
 `compile` can work around, which is why every diagnostic also states what
 compilation will do:
 
-```text
-✗ Optional property `amount` is not allowed in OpenAI strict mode; every property must be listed in `required`.
-  Path: inputSchema.properties.amount
-  SchemaPort can compile this: Emits `amount` as required and nullable.
-```
+| | Finding | Path | What `compile` does |
+|---|---|---|---|
+| ✗ | Optional property `amount` is not allowed in OpenAI strict mode; every property must be listed in `required`. | `inputSchema.properties.amount` | Emits `amount` as required and nullable. |
 
 `check` exits 1 when any error is present. Read that as "this canonical schema
 cannot be handed to that provider *directly*", not "this schema is broken".

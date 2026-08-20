@@ -197,38 +197,49 @@ A lossy cell means `compile` stops and tells you what it would have to give up:
 
 ```console
 $ schemaport compile ./examples/lossy --targets openai,gemini,mcp --out /tmp/pl-3
-Tool: tag_resource
+```
 
-OpenAI
-✗ Refused. Nothing was written for this target.
-  Compiling for openai would weaken this schema: dropped-additional-properties-schema at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
-  Path: inputSchema
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as the OpenAI `parameters` field.
-  • [safe] enabled-strict-mode at inputSchema
-    Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.
-  • [lossy] dropped-additional-properties-schema at inputSchema.properties.tags.additionalProperties
-    Replaced the `additionalProperties` value schema with `false`; the open typed map is gone.
-  • [safe] added-additional-properties-false at inputSchema.additionalProperties
-    Added `additionalProperties: false`, which strict mode requires on every object.
-  Re-run with --allow-lossy to accept the weaker output.
+For `Tool: tag_resource`, two of the three targets report
+`✗ Refused. Nothing was written for this target.`
 
-Gemini
-✗ Refused. Nothing was written for this target.
-  Compiling for gemini would weaken this schema: dropped-additional-properties at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
-  Path: inputSchema
-  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
-    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
-  • [safe] normalized-type-case at inputSchema
-    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
-  Re-run with --allow-lossy to accept the weaker output.
+### OpenAI
 
-MCP
-✓ /tmp/pl-3/mcp/tag-resource.json
-  No transformations.
+<Badge variant="danger">Refused</Badge>
 
+Compiling for `openai` would weaken this schema:
+`dropped-additional-properties-schema` at
+`inputSchema.properties.tags.additionalProperties`, reported at path
+`inputSchema`. Re-run with `--allow-lossy` to accept the weaker output.
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as the OpenAI `parameters` field. |
+| `[safe]` | `enabled-strict-mode` | `inputSchema` | Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching. |
+| `[lossy]` | `dropped-additional-properties-schema` | `inputSchema.properties.tags.additionalProperties` | Replaced the `additionalProperties` value schema with `false`; the open typed map is gone. |
+| `[safe]` | `added-additional-properties-false` | `inputSchema.additionalProperties` | Added `additionalProperties: false`, which strict mode requires on every object. |
+
+### Gemini
+
+<Badge variant="danger">Refused</Badge>
+
+Compiling for `gemini` would weaken this schema:
+`dropped-additional-properties` at
+`inputSchema.properties.tags.additionalProperties`, reported at path
+`inputSchema`. Re-run with `--allow-lossy` to accept the weaker output.
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[lossy]` | `dropped-additional-properties` | `inputSchema.properties.tags.additionalProperties` | Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted. |
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as `FunctionDeclaration.parameters`. |
+| `[safe]` | `normalized-type-case` | `inputSchema` | Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`). |
+
+### MCP
+
+<Badge variant="success">Written</Badge>
+
+Wrote `/tmp/pl-3/mcp/tag-resource.json`. No transformations.
+
+```console
 Result: 1 file written to /tmp/pl-3, 2 refusals
 ```
 

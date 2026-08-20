@@ -30,12 +30,10 @@ Transformations are printed by [`compile`](/commands/compile) and stored in the
 [manifest](/reference/manifest), so you can always inspect exactly what happened
 to your schema:
 
-```text
-  • [safe] converted-optional-property-to-nullable at inputSchema.properties.amount
-    Made `amount` required and added `"null"` to its type; strict mode has no optional properties.
-  • [safe] added-additional-properties-false at inputSchema.additionalProperties
-    Added `additionalProperties: false`, which strict mode requires on every object.
-```
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `converted-optional-property-to-nullable` | `inputSchema.properties.amount` | Made `amount` required and added `"null"` to its type; strict mode has no optional properties. |
+| `[safe]` | `added-additional-properties-false` | `inputSchema.additionalProperties` | Added `additionalProperties: false`, which strict mode requires on every object. |
 
 ## Two kinds of change
 
@@ -96,20 +94,21 @@ Gemini:
 schemaport compile tools/ --targets gemini --out generated/
 ```
 
-```text
-Tool: tag_resource
+<Badge variant="danger">Refused</Badge>
 
-Gemini
-✗ Refused. Nothing was written for this target.
-  Compiling for gemini would weaken this schema: dropped-additional-properties at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
-  Path: inputSchema
-  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
-    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
-  • [safe] normalized-type-case at inputSchema
-    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+For `Tool: tag_resource`, Gemini reports
+`✗ Refused. Nothing was written for this target.` Compiling for `gemini` would
+weaken this schema: `dropped-additional-properties` at
+`inputSchema.properties.tags.additionalProperties`, reported at path
+`inputSchema`. Re-run with `--allow-lossy` to accept the weaker output.
 
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[lossy]` | `dropped-additional-properties` | `inputSchema.properties.tags.additionalProperties` | Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted. |
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as `FunctionDeclaration.parameters`. |
+| `[safe]` | `normalized-type-case` | `inputSchema` | Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`). |
+
+```console
 Result: 0 files written to generated, 1 refusal
 ```
 
@@ -136,18 +135,15 @@ output directory and from the manifest.
 schemaport compile tools/ --targets gemini --out generated/ --allow-lossy
 ```
 
-```text
-Tool: tag_resource
+For `Tool: tag_resource`, Gemini wrote `generated/gemini/tag-resource.json`:
 
-Gemini
-✓ generated/gemini/tag-resource.json
-  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
-    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
-  • [safe] normalized-type-case at inputSchema
-    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[lossy]` | `dropped-additional-properties` | `inputSchema.properties.tags.additionalProperties` | Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted. |
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as `FunctionDeclaration.parameters`. |
+| `[safe]` | `normalized-type-case` | `inputSchema` | Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`). |
 
+```console
 Result: 1 file written to generated, 0 refusals
 ```
 
@@ -220,12 +216,17 @@ So the rule has a second half: **a transformation that changes runtime behaviour
 must produce a warning**, and that warning survives into the compile result and
 the manifest:
 
-```text
-  • [safe] converted-optional-property-to-nullable at inputSchema.properties.amount
-    Made `amount` required and added `"null"` to its type; strict mode has no optional properties.
-⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
-  Path: inputSchema.properties.amount
-```
+The transformation:
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `converted-optional-property-to-nullable` | `inputSchema.properties.amount` | Made `amount` required and added `"null"` to its type; strict mode has no optional properties. |
+
+and the warning it is required to produce:
+
+| | Warning | Path |
+|---|---|---|
+| ⚠ | After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`. | `inputSchema.properties.amount` |
 
 Safe and silent are different words. "Compiled with zero warnings" is only ever
 printed when the provider genuinely preserves the canonical contract, unchanged

@@ -142,7 +142,7 @@ refused because a transformation would weaken the schema.
 Codes are part of the public interface. Messages are written for humans and may
 be reworded in any release.
 
-```sh
+```sh wrap
 # Stable: select on the code.
 schemaport check tools --format json --fail-on never \
   | jq '[.tools[].targets[].diagnostics[] | select(.code == "openai/strict-optional-property")] | length'

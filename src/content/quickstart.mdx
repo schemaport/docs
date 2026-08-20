@@ -25,7 +25,7 @@ you linked the binary.
 A canonical tool is plain JSON: a `name`, an optional `description`, and an
 `inputSchema` that is a JSON Schema object. Put one in a `tools/` directory.
 
-```json title="tools/refund-order.json"
+```json wrap title="tools/refund-order.json"
 {
   "name": "refund_order",
   "description": "Refunds all or part of an order",
@@ -43,7 +43,7 @@ A canonical tool is plain JSON: a `name`, an optional `description`, and an
 
 This is `examples/refund-order/v1/refund-order.json` from the
 [`cli`](https://github.com/schemaport/cli) repository. Copy it, or point the
-commands at that file directly — the transcripts below are that one tool.
+commands at that file directly — the reports below are that one tool.
 
 Every command accepts a `.json` file or a directory of them. A directory is read
 recursively, skipping `node_modules`, `dist`, `coverage` and dot-directories, so
@@ -60,50 +60,55 @@ schemaport check tools/
 `check` runs every selected provider's rules over every tool. With no
 `--targets`, that is all four.
 
-```text
-Tool: refund_order
+It reports one block per finding, grouped by provider under `Tool: refund_order`.
+Here is everything it printed, with the `✗` and `⚠` markers from your terminal.
 
-OpenAI
-✗ OpenAI strict mode requires `additionalProperties: false` on every object schema.
-  Path: inputSchema.additionalProperties
-  SchemaPort can compile this: Adds `additionalProperties: false`.
-  Docs: https://developers.openai.com/api/docs/guides/structured-outputs
-✗ Optional property `amount` is not allowed in OpenAI strict mode; every property must be listed in `required`.
-  Path: inputSchema.properties.amount
-  SchemaPort can compile this: Emits `amount` as required and nullable.
-  Docs: https://developers.openai.com/api/docs/guides/function-calling
-✗ Optional property `refundMethod` is not allowed in OpenAI strict mode; every property must be listed in `required`.
-  Path: inputSchema.properties.refundMethod
-  SchemaPort can compile this: Emits `refundMethod` as required and nullable.
-  Docs: https://developers.openai.com/api/docs/guides/function-calling
-⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
-  Path: inputSchema.properties.amount
-  SchemaPort can compile this: Adds `"null"` to the type of `amount`; the key is always present.
-  Docs: https://developers.openai.com/api/docs/guides/function-calling
-⚠ After compilation the model may send `refundMethod: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
-  Path: inputSchema.properties.refundMethod
-  SchemaPort can compile this: Adds `"null"` to the type of `refundMethod`; the key is always present.
-  Docs: https://developers.openai.com/api/docs/guides/function-calling
+#### OpenAI
 
-Anthropic
-⚠ Anthropic accepts this schema in full but does not validate tool inputs against it by default. The schema is rendered into the tool-use system prompt as guidance, so Claude may return mistyped values or omit required properties. Input validation requires `strict: true`, which SchemaPort does not emit because the strict subset rejects several keywords in this schema family.
-  Path: inputSchema
-  SchemaPort can compile this: Emits the default (non-strict) tool definition, preserving the schema verbatim.
-  Docs: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
-⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
-  Path: inputSchema.properties.amount.minimum
-  SchemaPort can compile this: Preserved verbatim in `input_schema`.
-  Docs: https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations
+<Badge variant="danger">3 errors</Badge>{" "}<Badge variant="warning">2 warnings</Badge>
 
-Gemini
-⚠ `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate function calls with constrained decoding. Under the default `AUTO` mode these guide the model rather than bind it.
-  Path: inputSchema.properties.amount
-  SchemaPort can compile this: Emits the constraint unchanged.
-  Docs: https://ai.google.dev/gemini-api/docs/function-calling
+| | Finding | Path | What `compile` does |
+|---|---|---|---|
+| ✗ | Strict mode requires `additionalProperties: false` on every object schema. | `inputSchema.additionalProperties` | Adds `additionalProperties: false`. |
+| ✗ | Optional property `amount` is not allowed in strict mode; every property must be listed in `required`. | `inputSchema.properties.amount` | Emits `amount` as required and nullable. |
+| ✗ | Optional property `refundMethod` is not allowed in strict mode; every property must be listed in `required`. | `inputSchema.properties.refundMethod` | Emits `refundMethod` as required and nullable. |
+| ⚠ | After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied". | `inputSchema.properties.amount` | Adds `"null"` to the type; the key is always present. |
+| ⚠ | After compilation the model may send `refundMethod: null` instead of omitting the property. | `inputSchema.properties.refundMethod` | Adds `"null"` to the type; the key is always present. |
 
-MCP
-✓ Compatible
+Rules from [structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
+and [function calling](https://developers.openai.com/api/docs/guides/function-calling).
 
+#### Anthropic
+
+<Badge variant="warning">2 warnings</Badge>
+
+| | Finding | Path | What `compile` does |
+|---|---|---|---|
+| ⚠ | Anthropic accepts this schema in full but does not validate tool inputs against it by default, so Claude may return mistyped values or omit required properties. | `inputSchema` | Emits the default (non-strict) tool definition, preserving the schema verbatim. |
+| ⚠ | `minimum` is never enforced. It is ignored in default tool use and is on the documented "Not supported" list for `strict: true`. | `inputSchema.properties.amount.minimum` | Preserved verbatim in `input_schema`. |
+
+Rules from [strict tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use)
+and [JSON Schema limitations](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations).
+
+#### Gemini
+
+<Badge variant="warning">1 warning</Badge>
+
+| | Finding | Path | What `compile` does |
+|---|---|---|---|
+| ⚠ | `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate calls with constrained decoding. Under the default `AUTO` mode it guides the model rather than binding it. | `inputSchema.properties.amount` | Emits the constraint unchanged. |
+
+Rules from [function calling](https://ai.google.dev/gemini-api/docs/function-calling).
+
+#### MCP
+
+<Badge variant="success">Compatible</Badge>
+
+No findings. MCP defers to JSON Schema, so this tool needs nothing changed.
+
+The run ends with the summary line:
+
+```console
 Result: 3 errors, 5 warnings
 ```
 
@@ -145,50 +150,65 @@ part of it.
 schemaport compile tools/ --out generated/
 ```
 
-```text
-Tool: refund_order
+Each provider reports the file it wrote, every transformation it applied, and any
+warning that survived. The CLI marks transformations `[safe]` or `[lossy]`; every
+one here is `[safe]`.
 
-OpenAI
-✓ generated/openai/refund-order.json
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as the OpenAI `parameters` field.
-  • [safe] enabled-strict-mode at inputSchema
-    Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.
-  • [safe] converted-optional-property-to-nullable at inputSchema.properties.amount
-    Made `amount` required and added `"null"` to its type; strict mode has no optional properties.
-  • [safe] converted-optional-property-to-nullable at inputSchema.properties.refundMethod
-    Made `refundMethod` required and added `"null"` to its type; strict mode has no optional properties.
-  • [safe] added-additional-properties-false at inputSchema.additionalProperties
-    Added `additionalProperties: false`, which strict mode requires on every object.
-⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
-  Path: inputSchema.properties.amount
-⚠ After compilation the model may send `refundMethod: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
-  Path: inputSchema.properties.refundMethod
+#### OpenAI
 
-Anthropic
-✓ generated/anthropic/refund-order.json
-  • [safe] renamed-input-schema-field at inputSchema
-    Emitted the canonical `inputSchema` as the Messages API field `input_schema`.
-⚠ Anthropic accepts this schema in full but does not validate tool inputs against it by default. The schema is rendered into the tool-use system prompt as guidance, so Claude may return mistyped values or omit required properties. Input validation requires `strict: true`, which SchemaPort does not emit because the strict subset rejects several keywords in this schema family.
-  Path: inputSchema
-⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
-  Path: inputSchema.properties.amount.minimum
+Wrote `generated/openai/refund-order.json`.
 
-Gemini
-✓ generated/gemini/refund-order.json
-  • [safe] added-enum-format at inputSchema.properties.refundMethod.format
-    Added `format: "enum"`, which the Gemini reference uses to mark an enumerated field.
-  • [safe] renamed-input-schema-to-parameters at inputSchema
-    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
-  • [safe] normalized-type-case at inputSchema
-    Emitted 4 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
-⚠ `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate function calls with constrained decoding. Under the default `AUTO` mode these guide the model rather than bind it.
-  Path: inputSchema.properties.amount
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as the OpenAI `parameters` field. |
+| `[safe]` | `enabled-strict-mode` | `inputSchema` | Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching. |
+| `[safe]` | `converted-optional-property-to-nullable` | `inputSchema.properties.amount` | Made `amount` required and added `"null"` to its type; strict mode has no optional properties. |
+| `[safe]` | `converted-optional-property-to-nullable` | `inputSchema.properties.refundMethod` | Made `refundMethod` required and added `"null"` to its type; strict mode has no optional properties. |
+| `[safe]` | `added-additional-properties-false` | `inputSchema.additionalProperties` | Added `additionalProperties: false`, which strict mode requires on every object. |
 
-MCP
-✓ generated/mcp/refund-order.json
-  No transformations.
+<Badge variant="warning">2 warnings survived</Badge>
 
+| | Warning | Path |
+|---|---|---|
+| ⚠ | After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied". | `inputSchema.properties.amount` |
+| ⚠ | After compilation the model may send `refundMethod: null` instead of omitting the property. | `inputSchema.properties.refundMethod` |
+
+#### Anthropic
+
+Wrote `generated/anthropic/refund-order.json`.
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `renamed-input-schema-field` | `inputSchema` | Emitted the canonical `inputSchema` as the Messages API field `input_schema`. |
+
+<Badge variant="warning">2 warnings survived</Badge>
+
+| | Warning | Path |
+|---|---|---|
+| ⚠ | Anthropic accepts this schema in full but does not validate tool inputs against it by default, so Claude may return mistyped values or omit required properties. | `inputSchema` |
+| ⚠ | `minimum` is never enforced. It is ignored in default tool use and is on the documented "Not supported" list for `strict: true`. | `inputSchema.properties.amount.minimum` |
+
+#### Gemini
+
+Wrote `generated/gemini/refund-order.json`.
+
+| | Transformation | Path | What changed |
+|---|---|---|---|
+| `[safe]` | `added-enum-format` | `inputSchema.properties.refundMethod.format` | Added `format: "enum"`, which the Gemini reference uses to mark an enumerated field. |
+| `[safe]` | `renamed-input-schema-to-parameters` | `inputSchema` | Emitted `inputSchema` as `FunctionDeclaration.parameters`. |
+| `[safe]` | `normalized-type-case` | `inputSchema` | Emitted 4 `type` values as Gemini `Type` enum names (`string` -> `STRING`). |
+
+<Badge variant="warning">1 warning survived</Badge>
+
+| | Warning | Path |
+|---|---|---|
+| ⚠ | `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate calls with constrained decoding. Under the default `AUTO` mode it guides the model rather than binding it. | `inputSchema.properties.amount` |
+
+#### MCP
+
+Wrote `generated/mcp/refund-order.json`. No transformations, no warnings.
+
+```console
 Result: 4 files written to generated, 0 refusals
 ```
 
@@ -266,7 +286,7 @@ nothing else did. `manifest.json` records the same story in machine-readable
 form — where each output came from, every transformation with its `lossy` flag,
 and every warning that survived:
 
-```json title="generated/manifest.json (openai section of refund_order)"
+```json wrap title="generated/manifest.json (openai section of refund_order)"
 {
   "output": "openai/refund-order.json",
   "transformations": [
