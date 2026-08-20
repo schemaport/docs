@@ -43,3 +43,6 @@ yarn-error.log*
 .pnpm-debug.log*
 .DS_Store
 next-env.d.ts
+
+# Local publishing script (reads a token from outside the repo)
+push-docs.sh
