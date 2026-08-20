@@ -30,59 +30,32 @@
   "footer": {
     "groups": [
       {
-        "group": "Documentation",
+        "group": "Start here",
         "links": [
-          {
-            "label": "Quickstart",
-            "href": "/quickstart"
-          },
-          {
-            "label": "Commands",
-            "href": "/commands/check"
-          },
-          {
-            "label": "Compatibility matrix",
-            "href": "/providers/compatibility-matrix"
-          }
+          { "label": "Quickstart", "href": "/quickstart" },
+          { "label": "Commands", "href": "/commands/check" },
+          { "label": "Compatibility matrix", "href": "/providers/compatibility-matrix" }
         ]
       },
       {
         "group": "Repositories",
         "links": [
-          {
-            "label": "core",
-            "href": "https://github.com/schemaport/core"
-          },
-          {
-            "label": "cli",
-            "href": "https://github.com/schemaport/cli"
-          },
-          {
-            "label": "provider-openai",
-            "href": "https://github.com/schemaport/provider-openai"
-          },
-          {
-            "label": "provider-anthropic",
-            "href": "https://github.com/schemaport/provider-anthropic"
-          },
-          {
-            "label": "provider-gemini",
-            "href": "https://github.com/schemaport/provider-gemini"
-          },
-          {
-            "label": "provider-mcp",
-            "href": "https://github.com/schemaport/provider-mcp"
-          }
+          { "label": "core", "href": "https://github.com/schemaport/core" },
+          { "label": "cli", "href": "https://github.com/schemaport/cli" },
+          { "label": "provider-openai", "href": "https://github.com/schemaport/provider-openai" },
+          { "label": "provider-anthropic", "href": "https://github.com/schemaport/provider-anthropic" },
+          { "label": "provider-gemini", "href": "https://github.com/schemaport/provider-gemini" },
+          { "label": "provider-mcp", "href": "https://github.com/schemaport/provider-mcp" }
         ]
       }
     ]
   },
   "tabs": [
     {
-      "tab": "Documentation",
+      "tab": "Get started",
       "groups": [
         {
-          "group": "Introduction",
+          "group": "Start here",
           "pages": [
             "introduction",
             "portability-problem",
@@ -98,7 +71,12 @@
             "concepts/safe-and-lossy-compilation",
             "concepts/breaking-changes"
           ]
-        },
+        }
+      ]
+    },
+    {
+      "tab": "Commands",
+      "groups": [
         {
           "group": "Commands",
           "pages": [
@@ -106,6 +84,20 @@
             "commands/compile",
             "commands/probe",
             "commands/diff"
+          ]
+        }
+      ]
+    },
+    {
+      "tab": "Guides",
+      "groups": [
+        {
+          "group": "Guides",
+          "pages": [
+            "guides/ci",
+            "guides/typescript",
+            "guides/existing-project",
+            "guides/migrate-providers"
           ]
         }
       ]
@@ -137,28 +129,9 @@
             "reference/exit-codes",
             "reference/manifest"
           ]
-        }
-      ]
-    },
-    {
-      "tab": "Guides",
-      "groups": [
+        },
         {
-          "group": "Guides",
-          "pages": [
-            "guides/ci",
-            "guides/typescript",
-            "guides/existing-project",
-            "guides/migrate-providers"
-          ]
-        }
-      ]
-    },
-    {
-      "tab": "Library API",
-      "groups": [
-        {
-          "group": "TypeScript API",
+          "group": "TypeScript library",
           "pages": [
             "api/overview",
             "api/provider-contract"
