@@ -1,0 +1,299 @@
+---
+title: Compile provider-native tool definitions
+navTitle: Compile
+description: Turn one canonical tool into OpenAI, Anthropic, Gemini and MCP definitions, plus a manifest recording every transformation — refusing anything that would weaken your schema.
+keywords:
+  - compile
+  - allow-lossy
+  - transformations
+  - manifest
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+`schemaport compile` writes a provider-native tool definition for each tool and
+each selected target, plus a [`manifest.json`](/reference/manifest) that records
+every change it made. It refuses to compile anything that would silently weaken
+your schema, and it needs no API key.
+
+## Syntax
+
+```sh
+schemaport compile <path...> --out <dir> [--targets <ids>] [--format text|json] [--allow-lossy] [--config <file>]
+```
+
+`--out` is required unless `schemaport.config.json` sets `output`. The directory
+is created if it does not exist.
+
+## Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--out <dir>` | — | **Required** (or `output` in the config file). Output directory. Missing it exits `2`. |
+| `--targets <ids>` | all four | Comma-separated `openai`, `anthropic`, `gemini`, `mcp`. |
+| `--format text\|json` | `text` | Output format for the report. Files are written either way. |
+| `--allow-lossy` | off | Accept transformations that drop or weaken a canonical constraint. |
+| `--config <file>` | `./schemaport.config.json` | Load defaults from a different config file. |
+| `--help`, `-h` | — | Print the `compile` reference and exit `0`. |
+
+## Output layout
+
+```
+generated/
+├── manifest.json
+├── anthropic/refund-order.json
+├── gemini/refund-order.json
+├── mcp/refund-order.json
+└── openai/refund-order.json
+```
+
+The file base name comes from the tool name: `refund_order` becomes
+`refund-order.json`. Files carry two-space JSON formatting and a trailing
+newline, and nothing derived from the clock, so compiling the same input twice
+produces byte-identical output.
+
+## A real run
+
+```console
+$ schemaport compile tools --out generated
+Tool: refund_order
+
+OpenAI
+✓ generated/openai/refund-order.json
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as the OpenAI `parameters` field.
+  • [safe] enabled-strict-mode at inputSchema
+    Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.
+  • [safe] converted-optional-property-to-nullable at inputSchema.properties.amount
+    Made `amount` required and added `"null"` to its type; strict mode has no optional properties.
+  • [safe] converted-optional-property-to-nullable at inputSchema.properties.refundMethod
+    Made `refundMethod` required and added `"null"` to its type; strict mode has no optional properties.
+  • [safe] added-additional-properties-false at inputSchema.additionalProperties
+    Added `additionalProperties: false`, which strict mode requires on every object.
+⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.amount
+⚠ After compilation the model may send `refundMethod: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.refundMethod
+
+Anthropic
+✓ generated/anthropic/refund-order.json
+  • [safe] renamed-input-schema-field at inputSchema
+    Emitted the canonical `inputSchema` as the Messages API field `input_schema`.
+⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
+  Path: inputSchema.properties.amount.minimum
+
+Gemini
+✓ generated/gemini/refund-order.json
+  • [safe] added-enum-format at inputSchema.properties.refundMethod.format
+    Added `format: "enum"`, which the Gemini reference uses to mark an enumerated field.
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
+  • [safe] normalized-type-case at inputSchema
+    Emitted 4 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+⚠ `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate function calls with constrained decoding. Under the default `AUTO` mode these guide the model rather than bind it.
+  Path: inputSchema.properties.amount
+
+MCP
+✓ generated/mcp/refund-order.json
+  No transformations.
+
+Result: 8 files written to generated, 0 refusals
+```
+
+The `search_orders` blocks and one Anthropic warning are trimmed above; the
+`Result:` line counts the whole run.
+
+Each `•` line is one [transformation](/concepts/safe-and-lossy-compilation),
+tagged `[safe]` or `[lossy]`, with the canonical schema path it applied to. The
+`⚠` lines are diagnostics that survived compilation — things the target accepts
+but represents or enforces differently.
+
+### What actually changed
+
+The canonical tool:
+
+```json
+{
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "orderId": { "type": "string", "description": "The order to refund" },
+      "amount": { "type": "number", "minimum": 0, "description": "Amount to refund. Omit to refund the full order." },
+      "refundMethod": { "type": "string", "description": "How to return the funds", "enum": ["original_payment", "store_credit", "bank_transfer"] }
+    },
+    "required": ["orderId"]
+  }
+}
+```
+
+`generated/openai/refund-order.json` — every optional property became required
+and nullable, because OpenAI strict mode has no optional properties:
+
+```json
+{
+  "type": "function",
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "orderId": { "type": "string", "description": "The order to refund" },
+      "amount": {
+        "type": ["number", "null"],
+        "description": "Amount to refund. Omit to refund the full order.",
+        "minimum": 0
+      },
+      "refundMethod": {
+        "type": ["string", "null"],
+        "description": "How to return the funds",
+        "enum": ["original_payment", "store_credit", "bank_transfer"]
+      }
+    },
+    "required": ["orderId", "amount", "refundMethod"],
+    "additionalProperties": false
+  },
+  "strict": true
+}
+```
+
+`generated/mcp/refund-order.json` is the canonical tool unchanged — MCP's tool
+shape is the canonical shape, which is why it reports `No transformations.`
+
+<Note>
+The blocks above are reformatted onto fewer lines for reading. The bytes
+SchemaPort writes put every array element on its own line.
+</Note>
+
+## Refusals
+
+SchemaPort never weakens a schema without being told to. When a target cannot
+represent a constraint, the compilation for that one tool/target pair is refused:
+
+```console
+$ schemaport compile tools --targets openai,gemini --out generated
+Tool: tag_resource
+
+OpenAI
+✗ Refused. Nothing was written for this target.
+  Compiling for openai would weaken this schema: dropped-additional-properties-schema at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
+  Path: inputSchema
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as the OpenAI `parameters` field.
+  • [safe] enabled-strict-mode at inputSchema
+    Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.
+  • [lossy] dropped-additional-properties-schema at inputSchema.properties.tags.additionalProperties
+    Replaced the `additionalProperties` value schema with `false`; the open typed map is gone.
+  • [safe] added-additional-properties-false at inputSchema.additionalProperties
+    Added `additionalProperties: false`, which strict mode requires on every object.
+  Re-run with --allow-lossy to accept the weaker output.
+
+Gemini
+✗ Refused. Nothing was written for this target.
+  Compiling for gemini would weaken this schema: dropped-additional-properties at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
+  Path: inputSchema
+  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
+    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
+  • [safe] normalized-type-case at inputSchema
+    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+
+Result: 0 files written to generated, 2 refusals
+```
+
+That run exits `1`. A refusal is scoped to one tool/target pair: everything else
+still gets written, the refused pair is left out of the manifest entirely, and
+you get usable output plus a non-zero exit code.
+
+<Warning>
+`manifest.json` is still written when every pair is refused — with `"tools": []`.
+An empty manifest is a real result, not a missing file, and committing it makes
+the regression visible in review.
+</Warning>
+
+`--allow-lossy` is what unblocks it:
+
+```console
+$ schemaport compile tools --targets openai,gemini --out generated --allow-lossy
+Tool: tag_resource
+
+OpenAI
+✓ generated/openai/tag-resource.json
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as the OpenAI `parameters` field.
+  • [safe] enabled-strict-mode at inputSchema
+    Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.
+  • [lossy] dropped-additional-properties-schema at inputSchema.properties.tags.additionalProperties
+    Replaced the `additionalProperties` value schema with `false`; the open typed map is gone.
+  • [safe] added-additional-properties-false at inputSchema.additionalProperties
+    Added `additionalProperties: false`, which strict mode requires on every object.
+
+Gemini
+✓ generated/gemini/tag-resource.json
+  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
+    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
+  • [safe] normalized-type-case at inputSchema
+    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+
+Result: 2 files written to generated, 0 refusals
+```
+
+The transformations are still recorded as `[lossy]` in the report and in the
+manifest. You accepted the weaker schema; you did not hide it.
+
+## Machine-readable output
+
+```json
+{
+  "command": "compile",
+  "schemaPortVersion": "0.1.0",
+  "summary": { "tools": 2, "written": 8, "refused": 0 },
+  "out": "generated",
+  "manifest": { "schemaPortVersion": "0.1.0", "targets": ["..."], "tools": ["..."] }
+}
+```
+
+`manifest` is the same object written to `<out>/manifest.json`. Files are written
+in JSON mode exactly as they are in text mode.
+
+## Exit codes
+
+| Code | When |
+|---|---|
+| `0` | Every tool compiled for every selected target. |
+| `1` | At least one tool/target pair was refused. |
+| `2` | Usage or input error, including a missing `--out`. |
+
+Full table: [Exit codes](/reference/exit-codes).
+
+## When you would use it
+
+- **To generate the definitions you actually ship.** Commit `generated/` and let
+  your agent code read from it, so the provider payloads in your repository are
+  derived from one schema rather than maintained four times.
+- **As a CI staleness gate.** Compilation is deterministic, so
+  `schemaport compile tools --out generated && git diff --exit-code generated`
+  fails only on a real change. See [Use SchemaPort in CI](/guides/ci).
+- **To see exactly what each provider will receive.** The transformation list is
+  the answer to "why does the OpenAI payload have `amount: null` in it?"
+- **To make a lossy decision explicit.** Leave `--allow-lossy` off by default;
+  reach for it once, deliberately, when you have read the `[lossy]` line and
+  accepted it.
+
+## Ownership
+
+The command, the output layout and the manifest belong to
+[`cli`](https://github.com/schemaport/cli). The refusal policy —
+"a lossy transformation is refused unless allowed" — belongs to
+[`core`](https://github.com/schemaport/core). Every individual transformation
+belongs to the provider package that performed it.
+
+## Next
+
+- [Manifest](/reference/manifest) — every field of the generated `manifest.json`
+- [Safe and lossy compilation](/concepts/safe-and-lossy-compilation) — what makes a transformation lossy
+- [Probe](/commands/probe) — confirm the compiled definition is really accepted

@@ -1,0 +1,134 @@
+---
+title: Exit codes
+navTitle: Exit codes
+description: What each exit code means, what triggers it per command, and why a missing API key is never reported as a schema rejection.
+keywords:
+  - exit codes
+  - CI
+  - fail-on
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+Every `schemaport` command returns one of four exit codes. The distinction that
+matters most is between `1` and `2`: exit `1` means the CLI worked and this is
+what it found, exit `2` means the CLI could not do the work you asked for. A CI
+job that treats them the same cannot tell a broken schema from a typo in the
+command line.
+
+## The table
+
+| Code | Name | What triggers it |
+|---|---|---|
+| `0` | Success | The command ran and found nothing at or above its failure threshold. |
+| `1` | Findings | `check` diagnostics at or above `--fail-on`; a refused (lossy) compilation; `diff` changes at or above `--fail-on`; a schema a provider rejected during `probe`; a compilation `probe` refused before sending anything. |
+| `2` | Usage or input error | Unknown command, unknown flag, missing flag value, unknown target id, a missing `--out`, a path that does not exist, invalid JSON, a file that is not a valid canonical tool, a duplicate tool name, an invalid config file — and any unexpected internal failure, such as an output directory that cannot be written. |
+| `3` | Environment error | `probe` only. No verdict was reached: missing API key, authentication failure, unknown model, rate limit, or network failure. |
+
+The codes are defined in one place, `EXIT` in
+[`cli/src/errors.ts`](https://github.com/schemaport/cli).
+
+## Per command
+
+### check
+
+`check` never returns `3`. Its exit code is decided entirely by `--fail-on`.
+
+| `--fail-on` | Exits `1` when |
+|---|---|
+| `error` (default) | any `error` diagnostic exists |
+| `warning` | any `error` or `warning` diagnostic exists |
+| `never` | never — always exits `0` |
+
+`info` diagnostics never affect the exit code.
+
+<Note>
+A `check` that exits `1` is normal on a first run. Most provider
+incompatibilities are things `compile` fixes for you — the diagnostic says so on
+its own third line. See [Check](/commands/check).
+</Note>
+
+### compile
+
+| Code | When |
+|---|---|
+| `0` | Every tool compiled for every selected target. |
+| `1` | At least one tool/target pair was refused. Everything that did compile was still written, and the refused pair is absent from the manifest. |
+| `2` | Usage or input error, including a missing `--out` with no `output` key in the config file. |
+
+A refusal means a transformation would have weakened your schema. `--allow-lossy`
+is what unblocks it — see [Compile](/commands/compile).
+
+### probe
+
+| Code | When |
+|---|---|
+| `0` | Nothing was rejected and nothing errored. `accepted` and `skipped` both count as success. |
+| `1` | At least one provider **rejected** a schema, or a compilation was refused so nothing could be sent. |
+| `3` | Nothing was rejected, no compilation was refused, and at least one probe reached no verdict. |
+
+The codes are checked in that order for the run as a whole, not per result. One
+rejection makes the run `1`; so does one refused compilation, even when every
+other target failed for want of a key. Exit `3` means every failure in the run
+was an environment failure.
+
+A missing API key is `3`, never `1`. So is a stale `--model`, a rate limit, an
+authentication failure and a network failure. That distinction is the entire
+point of `probe`: "we could not ask" and "the provider said no" are different
+answers, and only one of them is about your schema.
+
+<Warning>
+A refused compilation is the one `probe` outcome that renders as `⚠ ERROR` but
+exits `1`, not `3`. Nothing was sent, but the reason is a fact about your
+schema rather than about the machine, so `--allow-lossy` unblocks it rather
+than a credential. This is decided in `runProbe` in `cli/src/commands/probe.ts`.
+</Warning>
+
+To let CI treat "could not probe" as success while still failing on a real
+rejection, branch on the code:
+
+```sh
+schemaport probe tools/ || [ $? -eq 3 ]
+```
+
+### diff
+
+`diff` contacts no provider API, so it never returns `3`.
+
+| `--fail-on` | Exits `1` when |
+|---|---|
+| `breaking` (default) | any breaking change exists |
+| `any` | any change exists at all |
+| `never` | never — always exits `0` |
+
+## Errors in JSON mode
+
+`--format json` prints exactly one document to stdout and nothing else, including
+when the run fails. Load errors and usage errors come back as an `errors` array
+in that document and the command still exits `2`:
+
+```json
+{
+  "command": "check",
+  "schemaPortVersion": "0.1.0",
+  "errors": [
+    { "sourcePath": "tools/broken.json", "message": "Invalid JSON: Unexpected end of JSON input" }
+  ]
+}
+```
+
+In text mode the same failures go to **stderr** while findings go to stdout, so
+`schemaport check tools/ > report.txt` keeps the report and still shows you the
+failure.
+
+## Ownership
+
+Exit codes belong to [`cli`](https://github.com/schemaport/cli). The
+classification that decides whether a probe failure is a rejection or an
+environment error belongs to [`core`](https://github.com/schemaport/core) and the
+provider packages — the CLI only renders the verdict it is handed.
+
+## Next
+
+- [Diagnostics](/reference/diagnostics) — the codes to filter on in CI
+- [Use SchemaPort in CI](/guides/ci)

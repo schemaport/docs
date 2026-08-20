@@ -1,0 +1,166 @@
+---
+title: Compatibility
+description: What "compatible" means in SchemaPort, the three severity levels, and why a silently weakened schema is never reported as a pass.
+keywords:
+  - compatibility
+  - diagnostic
+  - severity
+  - error
+  - warning
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+"Compatible" is a stronger claim than "the API call succeeded". SchemaPort uses
+it to mean something specific: **this provider accepts your canonical schema and
+enforces the contract it describes.** A provider that accepts your schema and
+then ignores half of it is not compatible with it — it is merely tolerant of it.
+
+That distinction is the reason the product exists, so it is worth being precise
+about how it is reported.
+
+## Diagnostics
+
+A diagnostic is one finding: *here is something you should know about this tool
+on this provider*. [`check`](/commands/check) returns them, and
+[`compile`](/commands/compile) carries the relevant ones through into its result
+and the manifest.
+
+Every diagnostic carries the provider, the tool, a severity, a stable code, a
+one-line message, the exact schema path, what compilation will do about it, and
+usually a link to the official provider page the rule came from:
+
+```text
+⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
+  Path: inputSchema.properties.amount.minimum
+  SchemaPort can compile this: Preserved verbatim in `input_schema`.
+  Docs: https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations
+```
+
+The full field-by-field shape is in [Diagnostics](/reference/diagnostics).
+
+## The three severity levels
+
+### `error`
+
+The provider will reject this schema as written, **or** compiling it requires a
+lossy transformation.
+
+An error does not necessarily mean you are stuck. Most errors are things
+`compile` can work around, which is why every diagnostic also states what
+compilation will do:
+
+```text
+✗ Optional property `amount` is not allowed in OpenAI strict mode; every property must be listed in `required`.
+  Path: inputSchema.properties.amount
+  SchemaPort can compile this: Emits `amount` as required and nullable.
+```
+
+`check` exits 1 when any error is present. Read that as "this canonical schema
+cannot be handed to that provider *directly*", not "this schema is broken".
+
+### `warning`
+
+The schema is usable, but the provider represents or enforces part of it
+differently. Two families live here, and both matter:
+
+- *Your optional property will arrive as `null`.* Nothing was lost, but your
+  handler has to change.
+- *This constraint is accepted but not promised to be enforced.* The keyword
+  survives into the compiled output and still binds nothing.
+
+Warnings do not fail `check` by default. `--fail-on warning` makes them fail
+too, which is a reasonable setting for a repository that wants no surprises at
+all.
+
+### `info`
+
+Worth knowing, nothing changes.
+
+## What compilation will do about it
+
+Every diagnostic states what happens next, which is what lets `check` answer
+"can SchemaPort fix this for me?" rather than just complaining. Three outcomes
+exist:
+
+| Outcome | Meaning | Effect on `compile` |
+|---|---|---|
+| Fixable, nothing lost | A representation change expresses the same contract | Compiles normally |
+| Fixable, but a constraint is dropped | The compiled schema would accept inputs yours rejects | Refused unless `--allow-lossy` |
+| No safe representation exists | The provider cannot express this at all | Always refused |
+
+The third row is not hypothetical: OpenAI's tool-name rules produce it. A name
+that OpenAI's pattern rejects cannot be compiled, because the only "fix" would
+be renaming the tool — and that changes the identifier callers dispatch on.
+`--allow-lossy` does not help there, and it is not meant to.
+
+See [Safe and lossy compilation](/concepts/safe-and-lossy-compilation) for how
+the second and third rows are enforced.
+
+## The key principle
+
+<Warning>
+A schema is never reported compatible when a provider would accept it only after
+silently dropping a constraint.
+</Warning>
+
+This is enforced in the most literal way available. In `check`'s text output,
+`✓ Compatible` is printed for a target if and only if that target produced
+**zero** diagnostics. There is no "compatible with notes" state, and no
+severity is quiet enough to be swallowed.
+
+So when the `refund_order` example is checked against all four targets, exactly
+one line of that output is a pass:
+
+```text
+MCP
+✓ Compatible
+```
+
+Anthropic, which accepts the same schema in full and returns HTTP 200, does not
+get that line — because `minimum: 0` will never be enforced there. The clean
+result and the dangerous result look different, which is the entire point.
+
+Two related rules follow from the same principle:
+
+**No invented guarantees.** Provider rules are implemented only where there is
+evidence in official documentation, and each rule links the page it came from.
+Uncertain behaviour is reported as uncertain rather than resolved into a clean
+pass — Gemini's `minimum` warning names the exact call-site mode
+(`FunctionCallingConfig.mode = VALIDATED`) that would make the constraint bind,
+instead of guessing on your behalf.
+
+**No fabricated results.** A missing API key, a stale model id and a network
+failure are reported as environment errors during [`probe`](/commands/probe),
+never as a schema rejection. That is why probe has its own exit code.
+
+## Codes are the stable interface
+
+Codes are machine-readable and namespaced by the adapter that raised them,
+`<providerId>/<kebab-case-rule>`:
+
+```text
+openai/strict-optional-property
+gemini/unsupported-keyword
+mcp/input-schema-not-object
+core/lossy-transformation-refused
+```
+
+Filter on codes in CI, never on message text — messages are written for humans
+and may be reworded. Diagnostics are sorted by severity, then path, then code,
+so identical inputs always produce identically ordered output.
+
+Provider rules live in the provider packages —
+[`provider-openai`](https://github.com/schemaport/provider-openai),
+[`provider-anthropic`](https://github.com/schemaport/provider-anthropic),
+[`provider-gemini`](https://github.com/schemaport/provider-gemini) and
+[`provider-mcp`](https://github.com/schemaport/provider-mcp) — so they can be
+updated and released as providers change. The severity model and the ordering
+belong to [`core`](https://github.com/schemaport/core).
+
+## Next
+
+- [`check`](/commands/check) — flags, output formats, and `--fail-on`.
+- [Compatibility matrix](/providers/compatibility-matrix) — what each provider
+  supports, side by side.
+- [Diagnostics](/reference/diagnostics) — every code and what raises it.

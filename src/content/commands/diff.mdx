@@ -1,0 +1,192 @@
+---
+title: Diff two versions of a tool set
+navTitle: Diff
+description: Compare two versions of your tools and find out which changes break existing callers, before you ship the release.
+keywords:
+  - diff
+  - breaking changes
+  - versioning
+  - fail-on
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+`schemaport diff` compares two tool sets and classifies every change as
+**breaking**, **non-breaking** or **informational**. It answers one question:
+will this release break callers that were written against the old schema?
+
+It compares the two sides structurally and contacts no provider API.
+
+## Syntax
+
+```sh
+schemaport diff <old> <new> [--format text|json] [--fail-on breaking|any|never]
+```
+
+Exactly two paths, old first. Each may be a `.json` file or a directory. Passing
+one path, or three, is a usage error.
+
+## Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--format text\|json` | `text` | `json` prints one document to stdout and nothing else. |
+| `--fail-on breaking\|any\|never` | `breaking` | The classification at which the run exits `1`. |
+| `--help`, `-h` | — | Print the `diff` reference and exit `0`. |
+
+`diff` takes neither `--targets` nor `--config`. It compares canonical schemas,
+so there is no target to select, and nothing in the config file applies:
+
+```console
+$ schemaport diff v1 v2 --targets openai
+✗ Unknown option '--targets'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- "--targets" (run `schemaport diff --help`)
+Run `schemaport diff --help` for usage.
+```
+
+<Note>
+`diff` ignores config *values*, but the config file is still loaded before the
+command runs. A malformed `schemaport.config.json` in your working directory
+fails a `diff` too. See [Configuration](/reference/configuration).
+</Note>
+
+## A real run
+
+```console
+$ schemaport diff v1 v2
+Tool: refund_order
+
+BREAKING
+- Required property `currency` was added. Existing callers do not send it.
+  Path: inputSchema.properties.currency
+- Enum value `"store_credit"` removed.
+  Path: inputSchema.properties.refundMethod.enum
+
+NON-BREAKING
+- Optional property `reason` was added.
+  Path: inputSchema.properties.reason
+
+INFORMATIONAL
+- The description changed.
+  Path: inputSchema.properties.orderId.description
+
+Result: 2 breaking, 1 non-breaking, 1 informational
+```
+
+That run exits `1`, because `--fail-on` defaults to `breaking`.
+
+Changes are grouped by tool, then by classification, and only tools that changed
+are printed. When nothing changed at all:
+
+```console
+$ schemaport diff v1 v1
+No changes.
+
+Result: 0 breaking, 0 non-breaking, 0 informational
+```
+
+### What counts as breaking
+
+A change is breaking when a call that was valid against the old schema may no
+longer be valid against the new one. Adding a required property, narrowing an
+enum, narrowing a type, tightening a numeric bound, adding a pattern and removing
+a tool are all breaking. Loosening the same things is non-breaking, and a
+description change is informational. Anything the diff engine cannot confidently
+classify is reported as breaking, because a false "safe" is the expensive
+mistake. The full classification is on
+[Breaking changes](/concepts/breaking-changes).
+
+## Machine-readable output
+
+```json
+{
+  "command": "diff",
+  "schemaPortVersion": "0.1.0",
+  "summary": {
+    "breaking": 2,
+    "nonBreaking": 1,
+    "informational": 1
+  },
+  "changes": [
+    {
+      "classification": "breaking",
+      "code": "required-property-added",
+      "toolName": "refund_order",
+      "path": "inputSchema.properties.currency",
+      "message": "Required property `currency` was added. Existing callers do not send it.",
+      "after": {
+        "type": "string",
+        "description": "ISO 4217 currency code",
+        "enum": ["usd", "eur", "gbp"]
+      }
+    },
+    {
+      "classification": "breaking",
+      "code": "enum-narrowed",
+      "toolName": "refund_order",
+      "path": "inputSchema.properties.refundMethod.enum",
+      "message": "Enum value `\"store_credit\"` removed.",
+      "before": ["original_payment", "store_credit", "bank_transfer"],
+      "after": ["original_payment", "bank_transfer"]
+    }
+  ]
+}
+```
+
+Each change carries a stable `code` — filter on that, not on `message`. `before`
+and `after` are present when the change modified an existing value. The
+`enum` and array values above are reformatted onto one line for reading; the CLI
+prints one element per line.
+
+## Exit codes
+
+| Code | When |
+|---|---|
+| `0` | Nothing at or above `--fail-on`. |
+| `1` | A change at or above `--fail-on`. |
+| `2` | Usage or input error, including a path count that is not exactly two. |
+
+`diff` never returns `3` — it contacts no provider API. Full table:
+[Exit codes](/reference/exit-codes).
+
+## Directory layout matters
+
+Both sides load through the same rules as every other command, including the
+duplicate-name rule: tool names must be unique across everything one path loads.
+Keep versions as sibling directories and point each side of the diff at one of
+them.
+
+```
+tools/
+├── v1/refund-order.json
+└── v2/refund-order.json
+```
+
+`schemaport diff tools/v1 tools/v2` works. `schemaport check tools` does not —
+`refund_order` is declared twice. See
+[Tool format](/reference/tool-format#source-files).
+
+## When you would use it
+
+- **On every pull request that touches a tool schema.** Compare the branch
+  against the base commit and fail on breaking changes. See
+  [Use SchemaPort in CI](/guides/ci).
+- **Before you cut a release**, to decide whether it is a major version.
+  `--fail-on breaking` is the gate; the classification list is the changelog
+  entry.
+- **With `--fail-on any`** when a tool set is frozen and you want to be told
+  about every edit, including description changes.
+- **With `--fail-on never`** in a reporting step that posts a summary and stays
+  green, with the real gate in a separate step.
+
+## Ownership
+
+The command and its flags belong to [`cli`](https://github.com/schemaport/cli).
+The diff engine and every classification decision belong to
+[`core`](https://github.com/schemaport/core). No provider package participates —
+which is why the answer is the same regardless of which providers you target.
+
+## Next
+
+- [Breaking changes](/concepts/breaking-changes) — the full classification rules
+- [Use SchemaPort in CI](/guides/ci) — diffing a branch against its base
+- [Migrate between providers](/guides/migrate-providers)

@@ -1,0 +1,224 @@
+---
+title: Check schema compatibility
+navTitle: Check
+description: Find out where a tool schema is incompatible with OpenAI, Anthropic, Gemini and MCP, and whether compile can fix it — without an API key.
+keywords:
+  - check
+  - compatibility
+  - diagnostics
+  - fail-on
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+`schemaport check` runs every selected provider's compatibility rules over every
+tool you point it at and tells you three things per finding: what the provider
+will do with your schema, the exact schema path involved, and whether
+[`compile`](/commands/compile) can work around it for you.
+
+It reads local files only. No API key, no network request.
+
+## Syntax
+
+```sh
+schemaport check <path...> [--targets <ids>] [--format text|json] [--fail-on error|warning|never] [--config <file>]
+```
+
+`<path...>` is one or more `.json` files or directories. Directories are read
+recursively. You can omit the path entirely when `schemaport.config.json` sets
+`schemas`.
+
+## Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--targets <ids>` | all four | Comma-separated list of `openai`, `anthropic`, `gemini`, `mcp`. Results are printed in the order you list them. An unknown id exits `2`. |
+| `--format text\|json` | `text` | `json` prints exactly one document to stdout and nothing else. |
+| `--fail-on error\|warning\|never` | `error` | The severity at which the run exits `1`. `never` always exits `0`. |
+| `--config <file>` | `./schemaport.config.json` | Load defaults from a different config file. A `--config` that does not exist exits `2`. |
+| `--help`, `-h` | — | Print the `check` reference and exit `0`. |
+
+## A real run
+
+Running `check` over the two tools in the refund-order example, against all four
+targets:
+
+```console
+$ schemaport check tools --targets openai,anthropic,gemini,mcp
+Tool: refund_order
+
+OpenAI
+✗ OpenAI strict mode requires `additionalProperties: false` on every object schema.
+  Path: inputSchema.additionalProperties
+  SchemaPort can compile this: Adds `additionalProperties: false`.
+  Docs: https://developers.openai.com/api/docs/guides/structured-outputs
+✗ Optional property `amount` is not allowed in OpenAI strict mode; every property must be listed in `required`.
+  Path: inputSchema.properties.amount
+  SchemaPort can compile this: Emits `amount` as required and nullable.
+  Docs: https://developers.openai.com/api/docs/guides/function-calling
+⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.amount
+  SchemaPort can compile this: Adds `"null"` to the type of `amount`; the key is always present.
+  Docs: https://developers.openai.com/api/docs/guides/function-calling
+
+Anthropic
+⚠ Anthropic accepts this schema in full but does not validate tool inputs against it by default. The schema is rendered into the tool-use system prompt as guidance, so Claude may return mistyped values or omit required properties. Input validation requires `strict: true`, which SchemaPort does not emit because the strict subset rejects several keywords in this schema family.
+  Path: inputSchema
+  SchemaPort can compile this: Emits the default (non-strict) tool definition, preserving the schema verbatim.
+  Docs: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
+
+Gemini
+⚠ `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate function calls with constrained decoding. Under the default `AUTO` mode these guide the model rather than bind it.
+  Path: inputSchema.properties.amount
+  SchemaPort can compile this: Emits the constraint unchanged.
+  Docs: https://ai.google.dev/gemini-api/docs/function-calling
+
+MCP
+✓ Compatible
+
+Result: 10 errors, 14 warnings
+```
+
+The blocks for `search_orders` and several `refund_order` diagnostics are
+trimmed above; the `Result:` line counts every finding across every tool and
+target.
+
+### Reading a finding
+
+Each finding is one block:
+
+```
+✗ <message>
+  Path: <schema path>
+  SchemaPort can compile this: <what compile will do>
+  Docs: <the provider documentation the rule came from>
+```
+
+The third line is the important one. It reads `SchemaPort can compile this with
+--allow-lossy:` when the fix would weaken your schema, and `SchemaPort cannot
+compile this:` when no safe representation exists. The `Docs:` line appears only
+when the provider adapter supplied a URL.
+
+Markers are `✗` error, `⚠` warning, `ℹ` info, `✓` compatible. Colour is used only
+when stdout is a terminal and `NO_COLOR` is unset, so CI logs are plain
+automatically.
+
+<Note>
+Exiting `1` on that run is correct, not a bug. Every one of those errors is
+something `compile` fixes for you — an `error` means "the provider will not take
+this schema **as written**", not "you are stuck". Read the third line of each
+block before you change anything.
+</Note>
+
+## Machine-readable output
+
+`--format json` emits one document containing the provider `Diagnostic` objects
+verbatim:
+
+```json
+{
+  "command": "check",
+  "schemaPortVersion": "0.1.0",
+  "summary": {
+    "tools": 2,
+    "errors": 10,
+    "warnings": 14,
+    "infos": 0
+  },
+  "tools": [
+    {
+      "name": "refund_order",
+      "source": "tools/refund-order.json",
+      "targets": {
+        "openai": {
+          "diagnostics": [
+            {
+              "providerId": "openai",
+              "toolName": "refund_order",
+              "severity": "error",
+              "code": "openai/object-missing-additional-properties",
+              "message": "OpenAI strict mode requires `additionalProperties: false` on every object schema.",
+              "path": "inputSchema.additionalProperties",
+              "compile": {
+                "supported": true,
+                "lossy": false,
+                "detail": "Adds `additionalProperties: false`."
+              },
+              "docsUrl": "https://developers.openai.com/api/docs/guides/structured-outputs"
+            }
+          ],
+          "summary": { "error": 3, "warning": 2, "info": 0 }
+        }
+      }
+    }
+  ]
+}
+```
+
+The `diagnostics` array above is trimmed to its first entry; the summary counts
+are the real ones for that tool and target. The run-level summary counts `errors`/`warnings`/`infos`; each per-target
+summary counts `error`/`warning`/`info`. Filter on `code`, never on `message` —
+see [Diagnostics](/reference/diagnostics).
+
+## Exit codes
+
+| Code | When |
+|---|---|
+| `0` | Nothing at or above `--fail-on`. |
+| `1` | A finding at or above `--fail-on`. |
+| `2` | Usage or input error: unknown flag or target, a path that does not exist, invalid JSON, a file that is not a valid canonical tool, a duplicate tool name, or an invalid config file. |
+
+`check` never returns `3` — it contacts no provider API. Full table:
+[Exit codes](/reference/exit-codes).
+
+A load error stops the whole command. A run that quietly checked three of four
+files would be worse than useless in CI:
+
+```console
+$ schemaport check tools
+✗ tools/broken.json: SchemaPort does not support boolean subschemas. Use `{}` to accept any value, or remove the entry to disallow it.
+  Path: inputSchema.properties.tags
+✗ tools/broken.json: `name` must be at most 128 characters and contain no whitespace.
+  Path: name
+Result: 2 input errors
+```
+
+## When you would use it
+
+- **Before you write any provider code.** `check` answers "will this schema
+  survive the trip?" in one command, offline.
+- **As the CI gate on every pull request.** `--fail-on error` is the default;
+  `--fail-on warning` is the stricter setting for a team that wants to be told
+  about every representational difference, and `--fail-on never` keeps a
+  reporting step green while a separate step does the gating.
+- **After bumping a provider package.** Compatibility rules ship inside the
+  provider packages, so a bump can legitimately turn a green check red. That is
+  a finding about the provider, not a regression in your code.
+- **To decide whether you need `--allow-lossy` at all.** The `SchemaPort can
+  compile this with --allow-lossy:` line tells you before you run `compile`.
+
+<Tip>
+`--fail-on warning` changes the answer, not just the noise level. On the
+refund-order example, Anthropic reports warnings but no errors — so
+`schemaport check tools --targets anthropic` exits `0`, and
+`schemaport check tools --targets anthropic --fail-on warning` exits `1`. Those
+warnings are about constraints Anthropic does not enforce, which is exactly the
+kind of thing a team may want to be blocked on.
+</Tip>
+
+## Ownership
+
+The command, its flags and its output belong to
+[`cli`](https://github.com/schemaport/cli). Every rule it reports belongs to the
+provider package that raised it —
+[`provider-openai`](https://github.com/schemaport/provider-openai),
+[`provider-anthropic`](https://github.com/schemaport/provider-anthropic),
+[`provider-gemini`](https://github.com/schemaport/provider-gemini) or
+[`provider-mcp`](https://github.com/schemaport/provider-mcp). The CLI applies no
+compatibility rules of its own.
+
+## Next
+
+- [Compile](/commands/compile) — turn the findings into provider-native files
+- [Diagnostics](/reference/diagnostics) — severities, codes and `compile.supported`
+- [Compatibility matrix](/providers/compatibility-matrix) — the four targets side by side

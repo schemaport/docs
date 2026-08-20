@@ -19,24 +19,123 @@
     "primary": {
       "label": "Get started",
       "href": "/quickstart"
-    }
+    },
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/schemaport"
+      }
+    ]
+  },
+  "footer": {
+    "groups": [
+      {
+        "group": "Documentation",
+        "links": [
+          {
+            "label": "Quickstart",
+            "href": "/quickstart"
+          },
+          {
+            "label": "Commands",
+            "href": "/commands/check"
+          },
+          {
+            "label": "Compatibility matrix",
+            "href": "/providers/compatibility-matrix"
+          }
+        ]
+      },
+      {
+        "group": "Repositories",
+        "links": [
+          {
+            "label": "core",
+            "href": "https://github.com/schemaport/core"
+          },
+          {
+            "label": "cli",
+            "href": "https://github.com/schemaport/cli"
+          },
+          {
+            "label": "provider-openai",
+            "href": "https://github.com/schemaport/provider-openai"
+          },
+          {
+            "label": "provider-anthropic",
+            "href": "https://github.com/schemaport/provider-anthropic"
+          },
+          {
+            "label": "provider-gemini",
+            "href": "https://github.com/schemaport/provider-gemini"
+          },
+          {
+            "label": "provider-mcp",
+            "href": "https://github.com/schemaport/provider-mcp"
+          }
+        ]
+      }
+    ]
   },
   "tabs": [
     {
-      "tab": "Get started",
+      "tab": "Documentation",
       "groups": [
         {
-          "group": "Get started",
+          "group": "Introduction",
           "pages": [
             "introduction",
+            "portability-problem",
+            "installation",
             "quickstart"
           ]
         },
         {
-          "group": "Design your docs",
+          "group": "Core concepts",
           "pages": [
-            "components",
-            "customization"
+            "concepts/canonical-schemas",
+            "concepts/compatibility",
+            "concepts/safe-and-lossy-compilation",
+            "concepts/breaking-changes"
+          ]
+        },
+        {
+          "group": "Commands",
+          "pages": [
+            "commands/check",
+            "commands/compile",
+            "commands/probe",
+            "commands/diff"
+          ]
+        }
+      ]
+    },
+    {
+      "tab": "Providers",
+      "groups": [
+        {
+          "group": "Providers",
+          "pages": [
+            "providers/compatibility-matrix",
+            "providers/openai",
+            "providers/anthropic",
+            "providers/gemini",
+            "providers/mcp"
+          ]
+        }
+      ]
+    },
+    {
+      "tab": "Reference",
+      "groups": [
+        {
+          "group": "Reference",
+          "pages": [
+            "reference/tool-format",
+            "reference/configuration",
+            "reference/diagnostics",
+            "reference/exit-codes",
+            "reference/manifest"
           ]
         }
       ]
@@ -45,29 +144,27 @@
       "tab": "Guides",
       "groups": [
         {
-          "group": "Work with Thally",
+          "group": "Guides",
           "pages": [
-            "guides/create-a-site",
-            "guides/work-with-the-cli",
-            "guides/connect-ai-tools"
+            "guides/ci",
+            "guides/typescript",
+            "guides/existing-project",
+            "guides/migrate-providers"
           ]
         }
       ]
     },
     {
-      "tab": "API Reference",
+      "tab": "Library API",
       "groups": [
         {
-          "group": "Overview",
+          "group": "TypeScript API",
           "pages": [
-            "api/introduction",
-            "api/authentication"
+            "api/overview",
+            "api/provider-contract"
           ]
         }
-      ],
-      "api": {
-        "source": "openapi.yaml"
-      }
+      ]
     },
     {
       "tab": "Changelog",

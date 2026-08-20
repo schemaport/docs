@@ -1,15 +1,347 @@
 ---
 title: Changelog
-description: Record product changes that alter how readers use the documented experience.
+description: Release notes for all six SchemaPort packages, starting with the 0.1.0 initial release on 2026-08-20.
+keywords:
+  - changelog
+  - release notes
+  - 0.1.0
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
 ---
 
-## v0.1.0
+SchemaPort is one product assembled from six independently versioned
+repositories. Every package follows [Keep a
+Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic
+Versioning](https://semver.org/spec/v2.0.0.html), and each repository's own
+`CHANGELOG.md` is the authority for its entries. This page collects them.
 
-The first published version of this documentation.
+## 0.1.0 — 2026-08-20
 
-- A task-focused introduction and quickstart
-- Browsable API documentation generated from `openapi.yaml`
-- Agent-readable discovery files and a read-only MCP endpoint
+The initial release of all six packages, shipped together.
 
-Replace this entry with changes your readers need to understand. Lead with the
-impact, then link to the guide or reference that explains the new behavior.
+| Package | Repository | What landed |
+|---|---|---|
+| `schemaport` | [`cli`](https://github.com/schemaport/cli) | Four commands — `check`, `compile`, `probe`, `diff` — with JSON output, target selection, a config file and four exit codes |
+| `@schemaport/core` | [`core`](https://github.com/schemaport/core) | Canonical format, loading, diagnostics, the lossy-compilation policy, the diff engine, the provider adapter contract |
+| `@schemaport/provider-openai` | [`provider-openai`](https://github.com/schemaport/provider-openai) | 27 rules for the Responses API with `strict: true`, plus probing |
+| `@schemaport/provider-anthropic` | [`provider-anthropic`](https://github.com/schemaport/provider-anthropic) | 10 rules for the Messages API, plus probing |
+| `@schemaport/provider-gemini` | [`provider-gemini`](https://github.com/schemaport/provider-gemini) | 27 rules for the Gemini `FunctionDeclaration`, plus probing |
+| `@schemaport/provider-mcp` | [`provider-mcp`](https://github.com/schemaport/provider-mcp) | 13 rules against MCP spec revision `2026-07-28`, plus local validation |
+
+Every provider package states the date its rules were reviewed against official
+documentation — `2026-08-20` for all four — and carries that date on the adapter
+as `rulesReviewedAt`, so a rule can always be traced to the sources it came
+from.
+
+<Note>
+  These packages are **not yet published to npm**. See
+  [Installation](/installation) for how to obtain and run SchemaPort today.
+</Note>
+
+<Warning>
+  No test in any of the six repositories makes a network request. `probe` is
+  fully implemented and tested against mocked SDK clients across every outcome —
+  accepted, rejected, missing credentials, model-not-found, authentication, rate
+  limit, network and compile-refused — but no live provider API call has been
+  made. Probe results in your own environment are the only evidence about live
+  provider behaviour.
+</Warning>
+
+## schemaport (CLI)
+
+<Update label="schemaport 0.1.0" date="2026-08-20">
+
+### Added
+
+- **`schemaport check <path...>`** — runs every selected provider's
+  compatibility rules over each tool and prints the diagnostics grouped by tool,
+  then by target, with the schema path, the explanation and what `compile` will
+  do about it. `--fail-on error|warning|never` sets the exit-1 threshold.
+- **`schemaport compile <path...> --out <dir>`** — writes
+  `<dir>/<target>/<tool>.json` for each tool and target, plus a deterministic
+  `<dir>/manifest.json` recording the source, the output path, every
+  transformation and every surviving warning. `--allow-lossy` accepts
+  transformations that weaken the schema; without it, such a compilation is
+  refused, nothing is written for that tool/target pair, and the run exits 1.
+- **`schemaport probe <path...>`** — compiles each tool and asks the provider API
+  whether it accepts the definition. Renders accepted, rejected, skipped and
+  error distinctly, surfaces `errorKind`, and prints the provider's own error
+  message verbatim on a rejection. A missing API key names the environment
+  variable to set and the command to re-run, and exits 3 rather than 1.
+- **`schemaport diff <old> <new>`** — compares two tool sets and groups every
+  change as breaking, non-breaking or informational. Never contacts a provider
+  API. `--fail-on breaking|any|never` sets the exit-1 threshold.
+- `--format json` on all four commands, printing exactly one JSON document to
+  stdout with a stable top-level shape.
+- `--targets openai,anthropic,gemini,mcp` target selection. `check` and `compile`
+  default to all four; `probe` defaults to the three with a hosted API.
+- Optional `schemaport.config.json` (or `--config <file>`) supplying `schemas`,
+  `targets`, `output` and `allowLossy`. Command-line arguments always override
+  it.
+- Exit codes: `0` success, `1` findings, `2` usage or input error, `3`
+  environment error during `probe`.
+- Colour on a TTY only, suppressed by `NO_COLOR` and never applied to JSON.
+- An exported `run(argv, io)` entry point returning the exit code, so the CLI can
+  be driven in-process by tests and other tools.
+- `examples/refund-order` (v1 and v2) and `examples/lossy` example tool sets,
+  with a walkthrough in `examples/README.md`.
+
+</Update>
+
+## @schemaport/core
+
+<Update label="@schemaport/core 0.1.0" date="2026-08-20">
+
+### Added
+
+- **Canonical tool format.** `CanonicalTool` (`name`, `description`,
+  `inputSchema`) with `validateCanonicalTool` and `isCanonicalTool`.
+- **Schema loading.** `loadTools` reads a single `.json` file or a directory
+  recursively, accepting one tool per file, an array of tools, or
+  `{ "tools": [...] }`. Malformed files are collected as errors instead of
+  thrown, duplicate tool names are reported, and results are sorted by name so
+  downstream output is deterministic.
+- **Schema utilities.** `walkSchema` / `collectSchemas` for deterministic
+  depth-first traversal, `joinPath` for readable dotted schema paths,
+  `schemaTypes`, `isType`, `deepEqual`, `cloneSchema` and `stableStringify`.
+- **Diagnostics.** `Diagnostic` with three severity levels, a stable namespaced
+  `code`, a schema `path`, a `docsUrl`, and a `CompileAbility` stating whether
+  compilation can work around the issue and at what cost. Helpers: `diagnostic`,
+  `compilable`, `compilableLossy`, `notCompilable`, `sortDiagnostics`,
+  `countBySeverity`, `hasBlockingErrors`.
+- **Compilation policy.** `finalizeCompile` applies the lossy rule mechanically
+  for every provider: compilation is refused when a transformation is `lossy` and
+  the caller did not pass `allowLossy`, and when an error cannot be compiled
+  around. Errors that compile resolved are dropped in favour of their
+  transformation records; warnings always survive. Helpers: `transformation`,
+  `isLossy`.
+- **Value validation.** `validateValue` checks a JSON value against the supported
+  JSON Schema subset. `$ref` is reported as unverifiable rather than silently
+  passing.
+- **Probe result helpers.** `probeAccepted`, `probeRejected`,
+  `probeMissingCredentials`, `probeCompileRefused`, `probeError`, `probeSkipped`,
+  plus `classifyProviderError`, `toErrorDetail`, `resolveApiKey`,
+  `resolveProbeModel` and `probePrompt`. Missing credentials, stale model ids,
+  rate limits and network failures are classified separately from schema
+  rejections.
+- **Diff engine.** `diffToolSets` and `diffTools` classify changes as breaking,
+  non-breaking or informational, covering tool add/remove/rename, property
+  add/remove/require, type changes, enum narrowing and expansion, numeric and
+  string constraint changes, array and object structure changes, composition
+  changes, and metadata changes. Unclassifiable changes are reported as breaking.
+- **Provider adapter contract.** `SchemaPortProvider`, with `rulesReviewedAt` and
+  `docs` so compatibility rules carry their own provenance.
+- **Shared fixtures.** `refundOrderTool`, `minimalTool`, `nestedTool`,
+  `openMapTool`, `unionTool`, `constraintTool`, `FIXTURE_TOOLS` and
+  `INVALID_TOOL_VALUES`, so every provider package tests against the same inputs.
+
+### Determinism
+
+Every ordering helper compares strings by code point rather than with
+`localeCompare`, which is locale- and ICU-sensitive. Identical inputs therefore
+sort identically on every machine, which is what makes compiled output safe to
+commit and review.
+
+### Known limitations
+
+- `$ref` is never resolved; recursive schemas are unsupported.
+- Boolean subschemas (`{"properties": {"x": true}}`) are rejected rather than
+  silently skipped. `additionalProperties` still accepts a boolean.
+- `CanonicalTool` describes tool *arguments* only. There is no `outputSchema`,
+  so MCP's `outputSchema` and provider structured-output response schemas cannot
+  be expressed or compiled.
+- `if`/`then`/`else`, `dependentSchemas`, `patternProperties` and `not` are not
+  evaluated.
+- Diff performs structural comparison, not general JSON Schema subsumption.
+  Changes it cannot classify with confidence are reported as breaking.
+
+</Update>
+
+## @schemaport/provider-openai
+
+<Update label="@schemaport/provider-openai 0.1.0" date="2026-08-20">
+
+Rules reviewed against official OpenAI documentation on 2026-08-20; sources are
+listed in the package's `docs/openai-support.md`.
+
+### Added
+
+- `openaiProvider`, a `SchemaPortProvider` targeting the OpenAI **Responses API**
+  function tool (`POST /v1/responses`, `tools[]`) with `strict: true`.
+- `check()` with **27 compatibility rules**, covering tool identity, the root
+  schema, size limits, object rules, and keyword handling — including
+  `openai/tool-name-invalid-characters`, `openai/root-schema-not-object`,
+  `openai/too-many-properties`, `openai/schema-too-deep`,
+  `openai/strict-optional-property`, `openai/nullable-instead-of-omitted`,
+  `openai/object-missing-additional-properties`,
+  `openai/additional-properties-true`, `openai/unsupported-keyword`,
+  `openai/undocumented-constraint-keyword`, `openai/const-converted-to-enum` and
+  `openai/legacy-definitions-keyword`.
+- `compile()` producing a ready-to-send `FunctionTool`, built from an allowlist
+  of documented keywords so no unverified keyword reaches the API. Deterministic:
+  fixed key order, no timestamps, no randomness, independent of key order in the
+  source file.
+- Transformations, all recorded with a stable code, path, detail and `lossy`
+  flag. Non-lossy: `renamed-input-schema-to-parameters`, `enabled-strict-mode`,
+  `converted-optional-property-to-nullable`, `added-additional-properties-false`,
+  `closed-open-object`, `dropped-annotation-keyword`, `dropped-default-keyword`,
+  `converted-const-to-enum`, `renamed-definitions-to-defs`,
+  `rewrote-definitions-reference`, `converted-nullable-to-type-union`. Lossy:
+  `dropped-unsupported-keyword`, `dropped-conflicting-definitions`,
+  `dropped-undocumented-constraint-keyword`, `dropped-unknown-keyword`,
+  `dropped-unsupported-format`, `dropped-additional-properties-schema`,
+  `converted-one-of-to-any-of`.
+- `probe()` against `POST /v1/responses` using `openai@7.5.0`, with a forced
+  `tool_choice`, a 1024-token output cap and no execution of the developer's
+  function. Model resolution: `options.model` → `SCHEMAPORT_OPENAI_MODEL` →
+  `gpt-5.6-luna`. Key resolution: `options.apiKey` → `OPENAI_API_KEY`.
+  `options.client` is supported as a test seam.
+- **Two evidence tiers for a dropped constraint**, with separate diagnostic
+  codes, so a keyword OpenAI names as unsupported is distinguishable from one
+  that is merely absent from its supported list. The package's `docs/probing.md`
+  documents how to settle a tier-2 case against the live API.
+- **Paired error/warning diagnostics** wherever OpenAI rejects the canonical
+  schema *as written* **and** compilation changes runtime behaviour. The error
+  makes `check` fail CI; the warning survives `finalizeCompile` into the compile
+  result. Applies to `openai/strict-optional-property` +
+  `openai/nullable-instead-of-omitted`, and to
+  `openai/additional-properties-true` +
+  `openai/extra-properties-no-longer-accepted`.
+- 89 tests covering every rule by code, valid/invalid/warning fixtures,
+  deterministic compilation, the lossy refusal and `allowLossy` paths, and mocked
+  probe outcomes. No test makes a network request.
+
+</Update>
+
+## @schemaport/provider-anthropic
+
+<Update label="@schemaport/provider-anthropic 0.1.0" date="2026-08-20">
+
+### Added
+
+- `anthropicProvider`, implementing the `SchemaPortProvider` contract for the
+  Anthropic Messages API (`POST /v1/messages`, `tools` array). Also available as
+  the default export.
+- `check()` with **ten compatibility rules**, reviewed against official Anthropic
+  documentation on 2026-08-20:
+
+  | Code | Severity | Trigger |
+  |---|---|---|
+  | `anthropic/invalid-tool-name` | error | name outside `^[a-zA-Z0-9_-]{1,64}$` |
+  | `anthropic/input-schema-not-object` | error | root schema is not an object |
+  | `anthropic/missing-input-schema-type` | error | root schema has no `type`; compile adds `"type": "object"` |
+  | `anthropic/schema-not-enforced` | warning | default tool use does not validate tool inputs against the schema |
+  | `anthropic/constraint-not-enforced` | warning | keywords Anthropic documents as unsupported, never enforced in either mode |
+  | `anthropic/keyword-not-documented` | warning | `oneOf`, `not`, `prefixItems`, `minProperties`, `maxProperties`, `pattern` |
+  | `anthropic/undocumented-string-format` | warning | `format` outside the documented set |
+  | `anthropic/enum-non-primitive-value` | warning | complex types in `enum` |
+  | `anthropic/external-ref` | warning | `$ref` outside the document |
+  | `anthropic/missing-tool-description` | info | no description |
+
+- `compile()` producing a ready-to-send Anthropic tool definition (`name`,
+  `description?`, `input_schema`) via `finalizeCompile`, with two
+  transformations, both non-lossy: `renamed-input-schema-field` and
+  `added-input-schema-type`. **No keyword is ever dropped.**
+- `probe()` using `@anthropic-ai/sdk` 0.119.0, defaulting to model
+  `claude-haiku-4-5`, overridable with `options.model` and
+  `SCHEMAPORT_ANTHROPIC_MODEL`. Supports `options.client` as a test seam,
+  classifies failures with `classifyProviderError`, and never inspects tool
+  arguments from a response truncated at `max_tokens`.
+- Vitest suite covering every rule, deterministic compilation, the compile
+  refusal paths, and mocked probe outcomes. No test makes a network request.
+
+</Update>
+
+## @schemaport/provider-gemini
+
+<Update label="@schemaport/provider-gemini 0.1.0" date="2026-08-20">
+
+### Added
+
+- `geminiProvider`, implementing `SchemaPortProvider` with `id: 'gemini'`,
+  `rulesReviewedAt: '2026-08-20'` and `apiKeyEnvVar: 'GEMINI_API_KEY'`.
+- `check()` with **27 compatibility rules**, each carrying a stable `gemini/`
+  code, a path into the canonical tool and an official documentation URL:
+  - blocking errors — `gemini/invalid-function-name`,
+    `gemini/unresolvable-schema-reference`;
+  - errors compile fixes without loss — `gemini/unsupported-schema-reference`,
+    `gemini/unsupported-const` (string values);
+  - errors compile can only fix lossily —
+    `gemini/unsupported-additional-properties`, `gemini/unsupported-one-of`,
+    `gemini/unsupported-all-of`, `gemini/unsupported-not`,
+    `gemini/unsupported-multiple-of`, `gemini/unsupported-exclusive-minimum`,
+    `gemini/unsupported-exclusive-maximum`, `gemini/unsupported-unique-items`,
+    `gemini/unsupported-prefix-items`, `gemini/non-string-enum-values`,
+    `gemini/unsupported-const` (non-string values), `gemini/unsupported-type`,
+    `gemini/type-with-any-of`, `gemini/boolean-subschema`,
+    `gemini/unsupported-keyword`;
+  - warnings — `gemini/constraint-not-enforced`, `gemini/format-not-enforced`,
+    `gemini/default-not-enforced`, `gemini/missing-function-description`,
+    `gemini/function-name-leading-character`, `gemini/parameter-name-charset`,
+    `gemini/multi-type-union`;
+  - infos — `gemini/empty-parameters-omitted`,
+    `gemini/dropped-annotation-keyword`.
+- `compile()`, producing a ready-to-send Gemini `FunctionDeclaration` whose
+  `parameters` uses only the 22 fields the Gemini `Schema` object declares. Type
+  names are emitted as `Type` enum values, int64 constraints as decimal strings,
+  `$ref` is inlined, and `anyOf: [X, null]` collapses to `nullable: true`. Every
+  change is recorded as a `Transformation`, and constraint-destroying changes are
+  refused without `allowLossy`.
+- `probe()` using `@google/genai`, defaulting to the `gemini-2.5-flash-lite`
+  model, overridable via `options.model` and `SCHEMAPORT_GEMINI_MODEL`, with
+  `GEMINI_API_KEY` as the primary credential and `GOOGLE_API_KEY` as a fallback.
+  `options.client` is supported as a test seam.
+- Documentation including **the doc-versus-SDK disagreements found during
+  review** — where the Gemini Developer API reference, the Vertex AI reference
+  and the SDK typings do not agree, the package records the disagreement in a
+  warning rather than picking a winner.
+
+</Update>
+
+## @schemaport/provider-mcp
+
+<Update label="@schemaport/provider-mcp 0.1.0" date="2026-08-20">
+
+Implemented against Model Context Protocol specification revision
+**2026-07-28**; rules reviewed on **2026-08-20**.
+
+### Added
+
+- `mcpProvider` (named and default export), a `SchemaPortProvider` with
+  `id: 'mcp'` and `displayName: 'MCP'`.
+- `check()` with **thirteen compatibility rules**, every one traceable to spec
+  text: `mcp/tool-name-length`, `mcp/tool-name-characters`,
+  `mcp/input-schema-missing-type`, `mcp/input-schema-type-not-literal-object`,
+  `mcp/input-schema-type-union`, `mcp/input-schema-not-object`,
+  `mcp/unresolvable-ref`, `mcp/external-ref`, `mcp/non-default-schema-dialect`,
+  `mcp/x-mcp-header-invalid`, `mcp/x-mcp-header-duplicate`,
+  `mcp/x-mcp-header-unsupported-type`, `mcp/nullable-keyword-ignored`.
+- `compile()` producing an MCP `Tool` object ready to return from `tools/list`.
+  Three transformations, **all `lossy: false`**:
+  `added-input-schema-type-object`, `normalized-input-schema-type-to-object`,
+  `narrowed-input-schema-type-to-object`.
+- `probe()` returning `status: 'skipped'`. MCP has no hosted API, no endpoint and
+  no API key, so `apiKeyEnvVar` is deliberately unset.
+- `validateMcpTool()` and `validateToolsListResult()`, local protocol-shape
+  validation standing in for probing. `validateToolsListResult` enforces the
+  2026-07-28 additions `resultType`, `ttlMs` and `cacheScope`.
+- Exported types `McpTool`, `McpToolAnnotations`, `McpIcon`,
+  `McpToolsListResult`, `McpValidationResult`, `RootTypeVerdict`.
+- Exported constants `MCP_DIAGNOSTIC_CODES`, `MCP_TRANSFORMATION_CODES`,
+  `MCP_DOC_URLS`, `MCP_DOCS`, `MCP_SPEC_REVISION`, `RULES_REVIEWED_AT`.
+- Test suite covering every rule by diagnostic code, valid/invalid/warning
+  fixtures, deterministic compilation, compile-then-validate round trips, and
+  negative cases for both validation helpers. No test makes a network request.
+
+</Update>
+
+## Tracking changes
+
+Compatibility rules live in the provider packages, not in the CLI, so a provider
+release can change what `check` reports without anything in your project
+changing. That is a finding about the provider, not a regression — see
+[Run SchemaPort in CI](/guides/ci) for how to pin versions and read the result.
+
+Diagnostic codes, transformation codes, flags and exit codes are the stable
+interface. They are documented on [Diagnostics](/reference/diagnostics) and
+[Exit codes](/reference/exit-codes).

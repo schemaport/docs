@@ -1,0 +1,303 @@
+---
+title: Move between providers
+navTitle: Migrate providers
+description: Find out what a provider change costs before you commit to it, then compile, verify and ship.
+keywords:
+  - migration
+  - providers
+  - enforcement
+  - allow-lossy
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+Switching your application from one provider to another — or adding a second
+one alongside the first — is a schema question before it is a code question. Run
+`check` against the new target and you get the whole answer in one command, with
+no API key, no network access and no changes to your project.
+
+The result is usually one of three things: it compiles cleanly, it compiles
+after transformations you should read, or it is refused because the new provider
+cannot express a constraint you rely on. All three are useful, and the third is
+the one worth finding out today rather than in production.
+
+## 1. Ask what it costs
+
+Point `check` at the target you are considering:
+
+```sh
+schemaport check tools/ --targets gemini
+```
+
+Every finding names the schema path, explains the provider rule behind it, and
+says what `compile` will do about it. Three outcomes matter:
+
+| What `check` prints | What it means |
+|---|---|
+| `SchemaPort can compile this:` | An error you can ignore — compilation works around it without losing anything. |
+| `SchemaPort can compile this with --allow-lossy:` | A constraint the new provider cannot express. You will have to give it up, explicitly. |
+| Neither | A blocker. Compilation is refused whatever flags you pass. |
+
+Here is the middle case, on a tool whose `tags` property is an open string map:
+
+```console
+$ schemaport check examples/lossy --targets gemini
+Tool: tag_resource
+
+Gemini
+✗ Gemini has no `additionalProperties` field, so the schema for extra properties cannot be sent. The compiled schema accepts extra properties of any shape.
+  Path: inputSchema.properties.tags.additionalProperties
+  SchemaPort can compile this with --allow-lossy: Drops the `additionalProperties` schema; extra properties become unconstrained.
+  Docs: https://ai.google.dev/gemini-api/docs/function-calling
+
+Result: 1 error, 0 warnings
+$ echo $?
+1
+```
+
+That is the cost, stated before you have written a line of migration code: on
+Gemini, `tag_resource` accepts a tag map whose values are anything at all.
+
+<Tip>
+  Check the old and the new target in the same run — `--targets openai,gemini` —
+  and read the two columns side by side. The differences *between* them are the
+  migration; the findings they share are things you were already living with.
+</Tip>
+
+## 2. Compile for the new target
+
+```sh
+schemaport compile tools/ --out generated/ --targets gemini
+```
+
+Every tool that compiles is written to `generated/gemini/<tool>.json`, with each
+change recorded in `generated/manifest.json`. A tool that cannot compile without
+loss is **refused**: nothing is written for that pair, and the run exits `1`.
+
+```console
+$ schemaport compile examples/lossy --targets gemini --out generated
+Tool: tag_resource
+
+Gemini
+✗ Refused. Nothing was written for this target.
+  Compiling for gemini would weaken this schema: dropped-additional-properties at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
+  Path: inputSchema
+  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
+    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
+  • [safe] normalized-type-case at inputSchema
+    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+  Re-run with --allow-lossy to accept the weaker output.
+
+Result: 0 files written to generated, 1 refusal
+$ echo $?
+1
+```
+
+You have three real options, and picking between them is the migration decision:
+
+- **Accept the weaker schema.** Re-run with `--allow-lossy`. The transformation
+  stays in the manifest, so the decision is recorded rather than forgotten.
+- **Reshape the canonical tool** so the constraint survives everywhere. An open
+  string map usually wants to be an array of `{ key, value }` objects, which
+  every target can express.
+- **Keep the tool off that target.** Compile the rest for Gemini and leave this
+  one on the provider that can carry it.
+
+What never happens is the schema quietly getting weaker. See
+[Safe and lossy compilation](/concepts/safe-and-lossy-compilation).
+
+## 3. Watch for the provider that enforces less
+
+This is the failure mode that migrations actually hit, and it does not look like
+a failure. Moving to a more permissive provider makes `check` quieter, and the
+quiet is the problem.
+
+<Warning>
+  A clean `check` means the provider will **accept** your schema. It does not
+  mean the provider will **enforce** it. Those are different guarantees, and
+  they differ per provider.
+</Warning>
+
+### Anthropic enforces nothing without strict mode
+
+The Messages API takes arbitrary JSON Schema in `input_schema` and renders it
+into the tool-use system prompt as guidance. In the default configuration it
+performs no validation of the model's tool inputs at all — not `type`, not
+`required`, not `enum`, not `minimum`.
+
+So a schema that produced five OpenAI errors reports zero errors on Anthropic:
+
+```console
+$ schemaport check examples/refund-order/v1/refund-order.json --targets anthropic
+Tool: refund_order
+
+Anthropic
+⚠ Anthropic accepts this schema in full but does not validate tool inputs against it by default. The schema is rendered into the tool-use system prompt as guidance, so Claude may return mistyped values or omit required properties. Input validation requires `strict: true`, which SchemaPort does not emit because the strict subset rejects several keywords in this schema family.
+  Path: inputSchema
+⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
+  Path: inputSchema.properties.amount.minimum
+
+Result: 0 errors, 2 warnings
+$ echo $?
+0
+```
+
+Exit code `0`, because the default `--fail-on error` threshold does not fire on
+warnings. Read those two warnings anyway. Coming **from** OpenAI strict mode,
+where the schema was enforced by constrained decoding, you have just moved
+validation from the provider into your own handler. Your `amount >= 0` check now
+has to exist in code, because nothing upstream will apply it.
+
+`anthropic/schema-not-enforced` appears on every tool whose root schema declares
+at least one property. It is not a defect in your schema; it is the trade.
+
+<Note>
+  SchemaPort deliberately does not emit `strict: true` for Anthropic. The strict
+  subset returns a 400 for `minimum`, `maximum`, `multipleOf`, `minLength`,
+  `maxLength` and several array constraints, so emitting it would mean silently
+  dropping those keywords — a lossy transformation under SchemaPort's rules. The
+  choice is explicit rather than hidden: the whole schema is sent, and `check`
+  tells you none of it is enforced. If you want strict enforcement for one tool,
+  take the compiled output, remove the keywords the strict subset rejects, add
+  `additionalProperties: false` to every object, and add `strict: true`
+  yourself — knowing exactly which constraints you gave up. There is no flag
+  that does this for you.
+</Note>
+
+### Gemini drops several keywords
+
+Gemini's `parameters` is a `Schema` object with exactly 22 fields, and the API
+rejects anything else. These have no field at all, so compiling them is lossy:
+
+| Keyword | What is lost |
+|---|---|
+| `additionalProperties` (`false` or a schema) | the object stays open; extra properties are unconstrained |
+| `oneOf` | the exactly-one-branch requirement — it becomes `anyOf` |
+| `allOf` | every subschema |
+| `not` | the negated subschema |
+| `multipleOf` | the divisibility constraint |
+| `exclusiveMinimum` / `exclusiveMaximum` | the exclusive bound — it is *not* silently relaxed to an inclusive one |
+| `uniqueItems` | array uniqueness |
+| `prefixItems` | positional tuple types |
+| `enum` with any non-string member | the whole enum — Gemini's is `string[]` |
+| `const` with a non-string value | the pinned value |
+
+And of the keywords that do survive, several are accepted but not enforced.
+`minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, `minItems`,
+`maxItems`, `minProperties` and `maxProperties` are all sent, but only
+`FunctionCallingConfig.mode = VALIDATED` is documented to validate calls with
+constrained decoding. Under the default `AUTO` mode they guide the model rather
+than bind it — reported as `gemini/constraint-not-enforced`. `format` and
+`default` are documented as accepted and ignored.
+
+Two Gemini errors are blockers no flag will clear:
+`gemini/invalid-function-name` (a name outside `a-zA-Z0-9_.:-`, or longer than
+128 characters — SchemaPort will not rename your tool) and
+`gemini/unresolvable-schema-reference` (a recursive or dangling `$ref`, which
+cannot be inlined into a finite schema).
+
+### OpenAI enforces the most, and reshapes the most
+
+Moving *to* OpenAI is the opposite trade. Strict mode genuinely constrains
+decoding, so the schema is enforced — but it has no optional properties and
+requires `additionalProperties: false` on every object, so compilation rewrites
+your schema to fit. The visible consequence is that an omitted argument arrives
+as `null` instead of being absent. Handle it before you ship; see
+[Use generated schemas from TypeScript](/guides/typescript#the-consequence-of-openai-strict-mode-null-not-absent).
+
+OpenAI also drops `minLength` and `maxLength` as lossy, because its own
+documentation contradicts itself about whether they are supported.
+SchemaPort marks that drop as unconfirmed rather than claiming OpenAI rejects
+them — `openai/undocumented-constraint-keyword` says so explicitly.
+
+### MCP carries the schema unchanged
+
+MCP is a protocol, not a hosted model. `inputSchema` is passed through as
+written, and the three transformations are all `lossy: false` — they only
+normalise the root `type` to `object`. Enforcement is whatever your MCP server
+implements, which means it is entirely yours to get right.
+
+A side-by-side summary lives on the [Compatibility
+matrix](/providers/compatibility-matrix).
+
+## 4. Confirm with probe once you have a key
+
+`check` reasons from each provider's published documentation. `probe` asks the
+API. It compiles each tool, sends one request with the tool definition and a
+short synthetic prompt, and reports whether the definition was accepted — it
+never executes your function and never sends real data.
+
+```sh
+export GEMINI_API_KEY=…
+schemaport probe tools/ --targets gemini
+```
+
+Read the exit code carefully:
+
+| Exit | Meaning |
+|---|---|
+| `0` | Nothing was rejected. Accepted and skipped both count as success. |
+| `1` | A provider **rejected** a schema. This is the only outcome that means your schema is wrong. |
+| `3` | No verdict: missing API key, authentication failure, unknown model, rate limit, network failure, or a compilation refused before anything could be sent. |
+
+A missing key is always `3`, never `1`. "We could not ask" and "the provider
+said no" are different answers, and collapsing them is exactly what `probe`
+exists to prevent.
+
+`--targets mcp` is reported as skipped: MCP has no hosted API to ask. Use
+`validateMcpTool()` from `@schemaport/provider-mcp` for local protocol-shape
+validation instead.
+
+<Note>
+  **No live provider API call has been made in the course of building or
+  documenting SchemaPort.** `probe` is fully implemented, and every provider
+  package tests it against mocked SDK clients — accepted, rejected, missing
+  credentials, model-not-found, authentication, rate limit, network and
+  compile-refused paths all have coverage, and no test makes a network request.
+  What a provider does with *your* schema today is something only your own key
+  can tell you.
+</Note>
+
+One caveat worth knowing before you act on a rejection: the probe pins
+`tool_choice` to the tool so a call is always produced, and any 400 or 422 that
+does not mention a missing model is classified as `rejected`. A 400 caused by
+the forced tool choice — a model that does not support it, say — would therefore
+be reported as a schema rejection. Cross-check the `providerError.message`, which
+is printed verbatim, before you change your schema.
+
+## 5. Adding a second provider rather than replacing the first
+
+Everything above applies unchanged, with one addition: compile for both targets
+in the same run so a single canonical definition backs both call sites.
+
+```sh
+schemaport compile tools/ --out generated/ --targets openai,anthropic
+```
+
+Then write your handler against the union of both encodings — treat `null` and
+`undefined` identically, since OpenAI sends the first and Anthropic sends the
+second for the same optional property. One normalisation function at the edge is
+all it takes, and it is shown in full on
+[Use generated schemas from TypeScript](/guides/typescript).
+
+The lasting benefit of two targets is that `check` now watches both. The
+constraint you added for OpenAI and the constraint Gemini cannot express are
+both reported on the same run, against the same canonical file, before either
+one reaches production.
+
+## Next
+
+- [Compatibility matrix](/providers/compatibility-matrix) — all four targets,
+  keyword by keyword.
+- [`probe`](/commands/probe) — models, keys and every result status.
+- [Run SchemaPort in CI](/guides/ci) — keep the new target checked on every
+  pull request.
+
+Provider rules and transformations are owned by their own repositories —
+[`provider-openai`](https://github.com/schemaport/provider-openai),
+[`provider-anthropic`](https://github.com/schemaport/provider-anthropic),
+[`provider-gemini`](https://github.com/schemaport/provider-gemini) and
+[`provider-mcp`](https://github.com/schemaport/provider-mcp) — so a rule change
+in any of them changes what `check` tells you here.

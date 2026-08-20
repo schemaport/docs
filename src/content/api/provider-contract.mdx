@@ -1,0 +1,219 @@
+---
+title: Provider adapter contract
+navTitle: Provider contract
+description: Implement a new SchemaPort target by satisfying one small interface, and let core apply the compilation policy for you.
+keywords:
+  - provider
+  - adapter
+  - contract
+  - SchemaPortProvider
+timeEstimate: 8 min
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+A provider package answers three questions about one target:
+
+1. What is wrong with this canonical tool? — `check`
+2. What does a working version look like, and what did that cost? — `compile`
+3. Does the real API accept it right now? — `probe`
+
+Adapters know nothing about the CLI: no printing, no `process.exit`, no file
+system. The CLI knows nothing about provider compatibility rules. That split is
+what lets provider rules be versioned and released independently as the
+providers change.
+
+## The interface
+
+```ts
+interface SchemaPortProvider {
+  readonly id: string               // 'openai'
+  readonly displayName: string      // 'OpenAI'
+  readonly rulesReviewedAt: string  // 'YYYY-MM-DD'
+  readonly docs: readonly ProviderDocReference[]
+  readonly apiKeyEnvVar?: string    // 'OPENAI_API_KEY'
+
+  check(tool: CanonicalTool): Diagnostic[]
+  compile(tool: CanonicalTool, options?: CompileOptions): CompileResult
+  probe?(tool: CanonicalTool, options?: ProbeOptions): Promise<ProbeResult>
+}
+```
+
+`rulesReviewedAt` and `docs` are not decoration. Provider behaviour changes;
+these fields let a reader see when the rules were last checked against official
+documentation and read those sources themselves.
+
+## check
+
+Walk the canonical tool and return one diagnostic per problem. Use
+`collectSchemas` to visit every subschema with its path, and `joinPath` to build
+paths — never hand-build path strings.
+
+```ts
+import { collectSchemas, diagnostic, compilable, joinPath } from '@schemaport/core'
+
+export function check(tool: CanonicalTool): Diagnostic[] {
+  const diagnostics: Diagnostic[] = []
+
+  for (const { schema, path } of collectSchemas(tool.inputSchema, 'inputSchema')) {
+    if (schema.type === 'object' && schema.additionalProperties === undefined) {
+      diagnostics.push(diagnostic({
+        providerId: 'example',
+        toolName: tool.name,
+        severity: 'error',
+        code: 'example/missing-additional-properties',
+        message: 'Strict mode requires `additionalProperties: false` on every object.',
+        path: joinPath(path, 'additionalProperties'),
+        compile: compilable('Adds `additionalProperties: false`.'),
+        docsUrl: 'https://example.com/docs/function-calling',
+      }))
+    }
+  }
+
+  return diagnostics
+}
+```
+
+`check` must be pure: the same tool in, the same diagnostics out, in the same
+order.
+
+Only implement rules you have evidence for. If a target's behaviour is
+uncertain, emit a `warning` that says it is uncertain. Never invent a guarantee,
+and never report a schema as compatible when a constraint would be accepted and
+then ignored.
+
+## compile
+
+Produce the provider-native tool definition, record every change, and return
+through `finalizeCompile`. **Never implement the lossy refusal yourself** — mark
+transformations and let core apply the policy, so all four providers draw the
+line in exactly one place.
+
+```ts
+import { cloneSchema, finalizeCompile, transformation } from '@schemaport/core'
+
+export function compile(tool: CanonicalTool, options?: CompileOptions): CompileResult {
+  const transformations = []
+  const parameters = cloneSchema(tool.inputSchema)
+
+  // ... mutate `parameters`, pushing a transformation for each change ...
+  transformations.push(transformation(
+    'added-additional-properties-false',
+    'inputSchema',
+    'Closed the object, as strict mode requires.',
+    false, // lossy
+  ))
+
+  return finalizeCompile({
+    providerId: 'example',
+    tool,
+    output: { type: 'function', name: tool.name, parameters, strict: true },
+    transformations,
+    diagnostics: check(tool),
+    options,
+  })
+}
+```
+
+`finalizeCompile` refuses when a transformation is `lossy` and the caller did
+not pass `allowLossy`, and when a diagnostic is an `error` whose
+`compile.supported` is `false`. It drops errors that compile worked around —
+the transformation record represents them — and always keeps warnings.
+
+### Classifying lossy
+
+| | Meaning | Example |
+| --- | --- | --- |
+| `lossy: false` | The compiled schema expresses the same contract in the shape the provider requires. | Renaming `inputSchema`, normalizing type case, optional → required + nullable |
+| `lossy: true` | The compiled schema accepts inputs the canonical schema rejects, because a keyword was dropped or weakened. | Dropping `minimum`, erasing a typed `additionalProperties` map, collapsing `oneOf` |
+
+The question is not how much the JSON changed. It is whether the set of argument
+values the provider will accept grew beyond what the canonical schema allows.
+
+### One issue can need two diagnostics
+
+Because `finalizeCompile` drops errors that compile resolved, a single rule
+cannot be both "the provider rejects this as written" and "here is what changes
+at runtime". When both are true, emit two diagnostics at the same path — an
+`error` that disappears once compiled, and a `warning` that survives into the
+result and the manifest.
+
+Do not demote the error to a warning just so it survives. That understates a
+true fact: a reader running `schemaport check --fail-on error` in CI would get a
+clean exit for a schema the provider will reject.
+
+## probe
+
+Optional, and only meaningful for targets with a hosted API. The rules exist to
+keep a probe from lying:
+
+<Steps>
+  <Step title="Compile first">
+    If compilation is refused, return `probeCompileRefused` — never send a
+    schema SchemaPort would not generate.
+  </Step>
+  <Step title="Resolve credentials">
+    Use `resolveApiKey`. A missing key returns `probeMissingCredentials`, which
+    is an environment error, not a rejection.
+  </Step>
+  <Step title="Resolve the model">
+    Use `resolveProbeModel` so the model can be overridden by option and
+    environment variable. The default should come from current official docs.
+  </Step>
+  <Step title="Send the smallest request">
+    The compiled tool, one short instruction from `probePrompt(tool)`, and a
+    small output cap. Never execute the developer's function, and never send
+    real data.
+  </Step>
+  <Step title="Classify failures">
+    Use `classifyProviderError`. Only `'rejected'` means the schema was refused.
+    An expired key, a stale model id, a rate limit and a network failure are all
+    environment problems and must never be reported as a bad schema.
+  </Step>
+</Steps>
+
+`probeAccepted` validates any returned tool-call arguments against the
+**canonical** schema, not the compiled one — so a provider that accepted a
+constraint and then ignored it shows up as accepted-but-wrong-shape rather than
+a clean pass.
+
+`options.client` is a test seam. When it is supplied, use it and do not
+construct a client or read `process.env`.
+
+## Determinism
+
+Compiling the same canonical tool twice must produce byte-identical output and
+the same `transformations` in the same order. No timestamps, no `Date.now()`, no
+`Math.random()`, no iteration over unordered sets, and no `localeCompare` —
+core exports `compareStrings` for ordering, which compares by code point so
+results do not vary by locale.
+
+## Packaging rules
+
+- Depend on `@schemaport/core` with a semver range. Never `file:` or `link:`.
+- Never depend on another provider package.
+- Never copy a core type into your package.
+- Export your provider as a named export plus a default export.
+
+## Testing
+
+Provider packages own their evidence. Each should ship valid, invalid and
+warning fixtures; one test per implemented rule asserting the diagnostic `code`;
+a determinism test that compiles the same fixture twice; the lossy refusal path
+and the `allowLossy` path; and mocked probe tests covering accepted, rejected,
+missing credentials, and at least one non-schema failure.
+
+Shared canonical fixtures are importable from core, so every provider is tested
+against the same inputs:
+
+```ts
+import { refundOrderTool, nestedTool, openMapTool } from '@schemaport/core'
+```
+
+No test may make a network request.
+
+## Next steps
+
+- [Use SchemaPort as a library](/api/overview)
+- [Safe and lossy compilation](/concepts/safe-and-lossy-compilation)
+- [Compatibility matrix](/providers/compatibility-matrix) — how the four existing adapters decided

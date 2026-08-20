@@ -1,0 +1,162 @@
+---
+title: Use SchemaPort as a library
+navTitle: Library overview
+description: Load, validate, compile and diff canonical tool schemas from TypeScript, without going through the CLI.
+keywords:
+  - library
+  - programmatic
+  - API
+  - core
+timeEstimate: 6 min
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+SchemaPort is a CLI first, but every capability it exposes lives in
+`@schemaport/core` and the four provider packages. Import them when you want to
+embed compatibility checking in your own tooling, generate schemas at runtime,
+or write a provider adapter of your own.
+
+<Note>
+  SchemaPort has no HTTP API. This is a TypeScript library reference. Everything
+  described here runs locally, in your process.
+</Note>
+
+## Install
+
+The 0.1.0 packages are not published to npm yet. See
+[Installation](/installation) for the workspace build that works today.
+
+```ts
+import { loadTools, diffToolSets, validateValue } from '@schemaport/core'
+import { openaiProvider } from '@schemaport/provider-openai'
+```
+
+`@schemaport/core` has **no runtime dependencies** and never imports a provider
+package. Provider packages depend only on core, and never on each other.
+
+## Load canonical tools
+
+`loadTools` accepts a file or a directory and never throws on bad input —
+malformed files come back in `errors` so one broken file does not hide the rest.
+
+```ts
+import { loadTools } from '@schemaport/core'
+
+const { tools, errors } = loadTools('./schemas')
+
+if (errors.length > 0) {
+  for (const error of errors) console.error(`${error.sourcePath}: ${error.message}`)
+  process.exit(2)
+}
+
+for (const { tool, sourcePath } of tools) {
+  console.log(tool.name, 'from', sourcePath)
+}
+```
+
+Tools come back sorted by name, which is what makes every downstream output
+deterministic regardless of file-system ordering.
+
+## Check and compile for a provider
+
+Every provider implements the same small contract, so the calling code does not
+change when you add a target.
+
+```ts
+import { loadTools } from '@schemaport/core'
+import { openaiProvider } from '@schemaport/provider-openai'
+
+const [{ tool }] = loadTools('./schemas/refund-order.json').tools
+
+for (const diagnostic of openaiProvider.check(tool)) {
+  console.log(diagnostic.severity, diagnostic.code, diagnostic.path)
+}
+
+const result = openaiProvider.compile(tool)
+
+if (!result.ok) {
+  // Compilation was refused because it would weaken the schema.
+  for (const d of result.diagnostics.filter((d) => d.severity === 'error')) {
+    console.error(d.message)
+  }
+} else {
+  console.log(JSON.stringify(result.output, null, 2))
+  for (const t of result.transformations) {
+    console.log(t.lossy ? '[lossy]' : '[safe] ', t.code, t.path)
+  }
+}
+```
+
+Pass `{ allowLossy: true }` to accept a weaker schema deliberately. See
+[Safe and lossy compilation](/concepts/safe-and-lossy-compilation) for what that
+means.
+
+## Detect breaking changes
+
+```ts
+import { loadTools, diffToolSets } from '@schemaport/core'
+
+const before = loadTools('./schemas-v1').tools.map((entry) => entry.tool)
+const after = loadTools('./schemas-v2').tools.map((entry) => entry.tool)
+
+const { changes, summary } = diffToolSets(before, after)
+
+if (summary.breaking > 0) {
+  for (const change of changes.filter((c) => c.classification === 'breaking')) {
+    console.error(`${change.code} at ${change.path}: ${change.message}`)
+  }
+  process.exit(1)
+}
+```
+
+## Validate a value against a canonical schema
+
+`validateValue` implements the JSON Schema subset SchemaPort supports. It is
+what Probe uses to answer *"did the provider actually produce arguments matching
+the canonical shape?"*
+
+```ts
+import { validateValue } from '@schemaport/core'
+
+const { valid, errors } = validateValue(tool.inputSchema, { orderId: 'ord_1' })
+```
+
+`$ref` is never resolved: a schema containing one reports that the value could
+not be verified rather than silently passing.
+
+## Exported surface
+
+`@schemaport/core` exports 50 runtime values plus its types. The ones you are
+most likely to need:
+
+| Area | Exports |
+| --- | --- |
+| Loading | `loadTools`, `toolFileBaseName`, `displayPath` |
+| Validation | `validateCanonicalTool`, `isCanonicalTool`, `validateValue` |
+| Schema utilities | `walkSchema`, `collectSchemas`, `joinPath`, `schemaTypes`, `asSchema`, `deepEqual`, `cloneSchema`, `stableStringify`, `compareStrings` |
+| Diagnostics | `diagnostic`, `compilable`, `compilableLossy`, `notCompilable`, `sortDiagnostics`, `countBySeverity`, `hasBlockingErrors` |
+| Compilation | `finalizeCompile`, `transformation`, `isLossy` |
+| Probing | `probeAccepted`, `probeRejected`, `probeMissingCredentials`, `probeCompileRefused`, `probeError`, `probeSkipped`, `classifyProviderError`, `toErrorDetail`, `resolveApiKey`, `resolveProbeModel`, `probePrompt` |
+| Diff | `diffToolSets`, `diffTools`, `summarizeChanges` |
+| Fixtures | `refundOrderTool`, `minimalTool`, `nestedTool`, `openMapTool`, `unionTool`, `constraintTool`, `FIXTURE_TOOLS`, `INVALID_TOOL_VALUES` |
+| Version | `SCHEMAPORT_VERSION` |
+
+Types are exported alongside them: `CanonicalTool`, `JsonSchema`, `Diagnostic`,
+`CompileResult`, `Transformation`, `ProbeResult`, `ProbeOptions`,
+`SchemaPortProvider`, `SchemaChange`, `DiffResult`, and others.
+
+## Shared test fixtures
+
+The canonical tools SchemaPort tests itself against are exported, so your own
+tests can use the same inputs:
+
+```ts
+import { refundOrderTool, nestedTool, openMapTool } from '@schemaport/core'
+```
+
+## Next steps
+
+- [Provider adapter contract](/api/provider-contract) — implement a new target
+- [Canonical tool format](/reference/tool-format) — what a valid tool looks like
+- [Diagnostics](/reference/diagnostics) — the shape `check()` returns

@@ -1,0 +1,273 @@
+---
+title: Compatibility matrix
+navTitle: Compatibility matrix
+description: What survives compilation, keyword by keyword, on OpenAI, Anthropic, Gemini and MCP.
+keywords:
+  - compatibility
+  - matrix
+  - keywords
+  - lossy
+  - providers
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+Use this page to find out, before you write a line of provider code, which of
+your JSON Schema keywords each target keeps, changes, or throws away. Every cell
+comes from the rule implementation in the provider repository that owns it —
+`provider-openai/src/rules.ts`, `provider-anthropic/src/rules.ts`,
+`provider-gemini/src/rules.ts` and `provider-mcp/src/rules.ts` — cross-checked by
+running each adapter's `check()` and `compile()` over a schema carrying that
+keyword.
+
+<Note>
+Nothing here required an API key. The matrix describes what SchemaPort's static
+rules do. Whether a provider then *honours* a keyword it accepted is a separate
+question, marked in the cells and settled per tool with [`probe`](/commands/probe).
+</Note>
+
+## Legend
+
+| Cell | Meaning |
+| --- | --- |
+| **Preserved** | The keyword is emitted to the provider unchanged, and the provider documents it as part of its schema surface. |
+| **Preserved, unenforced** | Emitted, but the provider's own documentation says it will not validate against it. The keyword becomes guidance for the model, not a guarantee. |
+| **Preserved, undocumented** | Emitted verbatim, but the provider documents neither support nor rejection. SchemaPort reports the uncertainty rather than resolving it. |
+| **Transformed** | Emitted in a different form that accepts exactly the same values. Nothing is lost; the change is recorded as a safe transformation. |
+| **Dropped (safe)** | Removed, but it constrained no value, so the compiled schema still rejects everything the canonical schema rejected. |
+| **Dropped — lossy** | Removed or weakened, so the compiled schema accepts arguments the canonical schema rejects. `compile` refuses unless you pass `--allow-lossy`. |
+| **Refused** | `compile` produces no output at all. `--allow-lossy` does not help. |
+| **Widened, unrecorded** | The compiled schema accepts more than the canonical one, but no transformation or diagnostic records it, so the lossy gate does not fire. One cell only — see the warning under [composition](#composition). |
+
+"Lossy" has one definition across all four targets, enforced in one place —
+`finalizeCompile` in `core` — so a lossy cell always means the same thing. See
+[safe and lossy compilation](/concepts/safe-and-lossy-compilation).
+
+## The matrix
+
+Rows are JSON Schema keywords as they appear in a canonical tool. Columns are
+compile targets.
+
+### Structure
+
+| Keyword | OpenAI | Anthropic | Gemini | MCP |
+| --- | --- | --- | --- | --- |
+| `type` (single) | Preserved | Preserved, unenforced | Transformed — uppercased to the `Type` enum name (`string` → `STRING`) | Preserved |
+| `type` (union array) | Preserved | Preserved, undocumented | Transformed — a `null` member becomes `nullable: true`; a wider union becomes `anyOf` branches | Preserved, except at the root, which is narrowed to `"object"` |
+| `properties` | Preserved | Preserved, unenforced | Preserved | Preserved |
+| `required` | Transformed — **every** property is added to `required`; those the canonical schema left optional gain `"null"` in their type union | Preserved, unenforced | Preserved | Preserved |
+| Nested objects | Preserved — each nested object is closed and fully required too | Preserved, unenforced | Preserved — but any `additionalProperties` inside is dropped lossily | Preserved |
+| Arrays of objects | Preserved — `items` is recursed into | Preserved, unenforced | Preserved — `items` is recursed into | Preserved |
+| `additionalProperties: false` | Preserved (and added where the canonical schema said nothing) | Preserved — the one value Anthropic's strict subset would accept, still unenforced by default | **Dropped — lossy** (`gemini/unsupported-additional-properties`); the object stays open | Preserved |
+| `additionalProperties: true` | Transformed — rewritten to `false`, which accepts fewer values; a warning records that the model can no longer send undeclared keys | Preserved, unenforced | Dropped (safe) — Gemini objects are open already | Preserved |
+| `additionalProperties: { … }` (typed map) | **Dropped — lossy**; replaced with `false`, so the map is gone entirely | Preserved, unenforced | **Dropped — lossy**; extra properties become unconstrained | Preserved |
+| `minProperties` / `maxProperties` | **Dropped — lossy** (unconfirmed; see [tiers](#the-two-openai-evidence-tiers)) | Preserved, undocumented | Preserved, unenforced — encoded as int64 decimal strings | Preserved |
+| `patternProperties`, `propertyNames` | **Dropped — lossy** (unconfirmed) | Preserved, no diagnostic | **Dropped — lossy** (`gemini/unsupported-keyword`) | Preserved |
+
+### Values and constraints
+
+| Keyword | OpenAI | Anthropic | Gemini | MCP |
+| --- | --- | --- | --- | --- |
+| `enum` (all strings) | Preserved | Preserved, unenforced | Preserved — `format: "enum"` is added when `format` is absent | Preserved |
+| `enum` (any non-string member) | Preserved | Preserved, unenforced | **Dropped — lossy**; Gemini declares `enum` as `string[]` | Preserved |
+| `const` (string) | Transformed — emitted as `enum: [value]` | Preserved, unenforced | Transformed — emitted as `enum: [value]` with `format: "enum"` | Preserved |
+| `const` (non-string) | Transformed — emitted as `enum: [value]` | Preserved, unenforced | **Dropped — lossy**; no `const` field and `enum` is strings only | Preserved |
+| `minimum` / `maximum` | Preserved | Preserved, unenforced — on Anthropic's documented "Not supported" list | Preserved, unenforced — real `Schema` fields | Preserved |
+| `exclusiveMinimum` / `exclusiveMaximum` | Preserved | Preserved, unenforced | **Dropped — lossy**; never silently relaxed to inclusive bounds | Preserved |
+| `multipleOf` | Preserved | Preserved, unenforced | **Dropped — lossy** | Preserved |
+| `minLength` / `maxLength` | **Dropped — lossy**; OpenAI's docs contradict themselves and SchemaPort could not confirm the behaviour | Preserved, unenforced | Preserved, unenforced — encoded as int64 decimal strings | Preserved |
+| `pattern` | Preserved | Preserved, undocumented — absent from both of Anthropic's lists | Preserved, unenforced | Preserved |
+| `format` (in the target's documented set) | Preserved — nine values | Preserved — ten values | Preserved, unenforced — any value is accepted, most trigger nothing | Preserved |
+| `format` (outside it, e.g. `uri`) | **Dropped — lossy** | Preserved — `uri` is in Anthropic's documented set | Preserved, unenforced | Preserved |
+| `default` | Dropped (safe) — the model no longer sees the default and will pick a value itself | Preserved | Preserved, unenforced — Gemini documents `default` as accepted and ignored for validation | Preserved |
+
+### Arrays
+
+| Keyword | OpenAI | Anthropic | Gemini | MCP |
+| --- | --- | --- | --- | --- |
+| `items` | Preserved | Preserved, unenforced | Preserved | Preserved |
+| `minItems` | Preserved | Preserved for `0` and `1` only; any other value is unenforced | Preserved, unenforced — int64 decimal string | Preserved |
+| `maxItems` | Preserved | Preserved, unenforced | Preserved, unenforced — int64 decimal string | Preserved |
+| `uniqueItems` | **Dropped — lossy** (unconfirmed) | Preserved, unenforced | **Dropped — lossy** | Preserved |
+| `prefixItems` | **Dropped — lossy** (unconfirmed) | Preserved, undocumented | **Dropped — lossy**; no tuple support | Preserved |
+| `contains`, `minContains`, `maxContains` | **Dropped — lossy** (unconfirmed) | Preserved, no diagnostic | **Dropped — lossy** | Preserved |
+
+### Composition
+
+| Keyword | OpenAI | Anthropic | Gemini | MCP |
+| --- | --- | --- | --- | --- |
+| `anyOf` | Preserved — but forbidden at the root, which is refused | Preserved, unenforced | Preserved — `anyOf: [X, {"type":"null"}]` collapses into `nullable: true` | Preserved |
+| `oneOf` | **Dropped — lossy**; emitted as `anyOf`, which accepts values matching more than one branch | Preserved, undocumented | **Dropped — lossy**; emitted as `anyOf` | Preserved |
+| `allOf` | **Dropped — lossy**; OpenAI names it unsupported | Preserved, no diagnostic | **Dropped — lossy** | Preserved |
+| `not` | **Dropped — lossy**; OpenAI names it unsupported | Preserved, undocumented | **Dropped — lossy** | Preserved |
+| `if` / `then` / `else` | **Dropped — lossy**; OpenAI names them unsupported | Preserved, no diagnostic | **Dropped — lossy** | Preserved |
+| `dependentRequired`, `dependentSchemas` | **Dropped — lossy**; OpenAI names them unsupported | Preserved, no diagnostic | **Dropped — lossy** | Preserved |
+| `true` as a subschema | Transformed — emitted as an unconstrained schema, which `true` already was; no transformation is recorded | Preserved | Transformed — emitted as an unconstrained schema | Preserved |
+| `false` as a subschema | Widened, unrecorded — see the note below | Preserved | **Dropped — lossy**; Gemini cannot express "no value is valid" | Preserved |
+
+<Warning>
+**`false` as a subschema is the one gap in the OpenAI column.** JSON Schema lets
+a boolean stand where a schema is expected, and `false` accepts no value at all.
+Compiling `{"properties": {"a": false}}` for OpenAI in version 0.1.0 emits
+`"a": {}` — an unconstrained schema that accepts everything — with **no
+transformation recorded and no diagnostic**, so the lossy gate never fires.
+Gemini reports the same situation correctly, as `gemini/boolean-subschema` plus
+a lossy `widened-false-subschema`. Anthropic and MCP preserve the boolean
+verbatim. Avoid `false` subschemas in a canonical tool you intend to compile for
+OpenAI.
+</Warning>
+
+### References and annotations
+
+| Keyword | OpenAI | Anthropic | Gemini | MCP |
+| --- | --- | --- | --- | --- |
+| `$ref` / `$defs` (local, non-recursive) | Preserved — passed through, never inlined | Preserved | Transformed — inlined at each use site, then the `$defs` map is removed | Preserved — never resolved |
+| `$ref` (recursive) | Preserved — OpenAI supports recursive references | Preserved | **Refused** — a recursive reference cannot be inlined into a finite schema | Preserved |
+| `$ref` (external or dangling) | Preserved verbatim; it will not resolve | Preserved, with a warning that nothing resolves it | **Refused** | Preserved, with a warning |
+| `definitions` (draft-07) | Transformed — renamed to `$defs` and `#/definitions/…` references repointed | Preserved | Transformed — inlined like `$defs` | Preserved |
+| `title` | Dropped (safe) | Preserved | Preserved — a real `Schema` field | Preserved |
+| `examples`, `$schema`, `$id`, `$anchor`, `$comment`, `deprecated`, `readOnly`, `writeOnly` | Dropped (safe) | Preserved | Dropped (safe) | Preserved |
+| `nullable` (OpenAPI 3.0) | Transformed — `nullable: true` becomes `"null"` in the type union | Preserved | Preserved — a real `Schema` field | Preserved, but JSON Schema 2020-12 validators ignore it |
+| Unknown or vendor keyword (`x-…`) | **Dropped — lossy**; an unrecognised keyword is assumed to constrain | Preserved | **Dropped — lossy**; the API rejects unknown fields | Preserved — `x-mcp-header` has its own rules |
+
+## How to read the Anthropic column
+
+Anthropic's column has three distinct states and they mean different things.
+Collapsing them would hide the thing that matters most about this target.
+
+<AccordionGroup>
+  <Accordion title="Preserved, unenforced">
+    The keyword is on Anthropic's documented "Not supported" list for
+    `strict: true`: `minimum`, `maximum`, `exclusiveMinimum`,
+    `exclusiveMaximum`, `multipleOf`, `minLength`, `maxLength`, `maxItems`,
+    `uniqueItems`, plus `minItems` other than `0`/`1` and `additionalProperties`
+    other than `false`. It is ignored in default tool use, and strict mode
+    returns a 400 rather than enforcing it. Diagnostic:
+    `anthropic/constraint-not-enforced`.
+  </Accordion>
+  <Accordion title="Preserved, undocumented">
+    The keyword appears in neither Anthropic's supported nor its unsupported
+    list: `pattern`, `oneOf`, `not`, `prefixItems`, `minProperties`,
+    `maxProperties`. SchemaPort cannot promise it is honoured and says so.
+    Diagnostic: `anthropic/keyword-not-documented`.
+  </Accordion>
+  <Accordion title="Preserved, no diagnostic">
+    Everything else — `allOf`, `if`/`then`/`else`, `contains`,
+    `patternProperties`, `propertyNames`, `dependentRequired`, `const`, `title`,
+    `default`, union `type` arrays. It rides along in `input_schema` untouched
+    and no per-keyword rule fires. The tool-level
+    `anthropic/schema-not-enforced` warning still applies to the whole schema.
+  </Accordion>
+</AccordionGroup>
+
+The one constant: **Anthropic never drops anything.** `provider-anthropic` emits
+no lossy transformation at all, so `--allow-lossy` changes nothing on that
+target. The honesty cost is paid in `check`, which reports on every constrained
+tool that the schema is accepted but not validated.
+
+## The two OpenAI evidence tiers
+
+Several OpenAI cells say "lossy (unconfirmed)". That wording is deliberate.
+
+OpenAI's structured outputs guide names one set of keywords as unsupported —
+`allOf`, `not`, `dependentRequired`, `dependentSchemas`, `if`, `then`, `else`.
+That is **tier 1**, and dropping one produces `openai/unsupported-keyword`.
+
+A second set is merely *absent* from the supported lists: `minLength`,
+`maxLength`, `minProperties`, `maxProperties`, `patternProperties`,
+`propertyNames`, `uniqueItems`, `prefixItems`, `contains`, `minContains`,
+`maxContains`, `unevaluatedProperties`, `unevaluatedItems`. That is **tier 2**,
+and the guide contradicts itself about it: the supported-string-properties list
+contains only `pattern` and `format`, yet a later paragraph says fine-tuned
+models *additionally* do not support `minLength`, `maxLength` and the numeric
+bounds — which reads as though ordinary models do. OpenAI does not resolve it.
+
+SchemaPort takes the conservative branch. Tier-2 keywords are dropped, the drop
+is lossy, and the diagnostic
+(`openai/undocumented-constraint-keyword`) says plainly that SchemaPort could
+not confirm the behaviour — it does **not** claim OpenAI rejects the keyword.
+Full detail on [the OpenAI page](/providers/openai).
+
+## Reading a cell in practice
+
+The two states that change what you have to do are **Dropped — lossy** and
+**Refused**.
+
+A lossy cell means `compile` stops and tells you what it would have to give up:
+
+```console
+$ schemaport compile ./examples/lossy --targets openai,gemini,mcp --out /tmp/pl-3
+Tool: tag_resource
+
+OpenAI
+✗ Refused. Nothing was written for this target.
+  Compiling for openai would weaken this schema: dropped-additional-properties-schema at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
+  Path: inputSchema
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as the OpenAI `parameters` field.
+  • [safe] enabled-strict-mode at inputSchema
+    Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.
+  • [lossy] dropped-additional-properties-schema at inputSchema.properties.tags.additionalProperties
+    Replaced the `additionalProperties` value schema with `false`; the open typed map is gone.
+  • [safe] added-additional-properties-false at inputSchema.additionalProperties
+    Added `additionalProperties: false`, which strict mode requires on every object.
+  Re-run with --allow-lossy to accept the weaker output.
+
+Gemini
+✗ Refused. Nothing was written for this target.
+  Compiling for gemini would weaken this schema: dropped-additional-properties at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
+  Path: inputSchema
+  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
+    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
+  • [safe] normalized-type-case at inputSchema
+    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+  Re-run with --allow-lossy to accept the weaker output.
+
+MCP
+✓ /tmp/pl-3/mcp/tag-resource.json
+  No transformations.
+
+Result: 1 file written to /tmp/pl-3, 2 refusals
+```
+
+The same tool, one open typed map, three different answers: OpenAI erases the
+map, Gemini opens the object, MCP keeps the schema exactly as written.
+
+A **Refused** cell cannot be waved through. Gemini refuses a recursive `$ref`
+whether or not you pass `--allow-lossy`, because there is no finite schema to
+inline it into.
+
+## Where the columns come from
+
+| Column | Rule implementation | Reviewed |
+| --- | --- | --- |
+| OpenAI | [`provider-openai`](https://github.com/schemaport/provider-openai) — `src/rules.ts`, `src/keywords.ts`, `src/compile.ts` | `rulesReviewedAt: 2026-08-20` |
+| Anthropic | [`provider-anthropic`](https://github.com/schemaport/provider-anthropic) — `src/rules.ts`, `src/check.ts` | `rulesReviewedAt: 2026-08-20` |
+| Gemini | [`provider-gemini`](https://github.com/schemaport/provider-gemini) — `src/rules.ts`, `src/check.ts`, `src/compile.ts` | `rulesReviewedAt: 2026-08-20` |
+| MCP | [`provider-mcp`](https://github.com/schemaport/provider-mcp) — `src/rules.ts`, `src/check.ts` | spec revision `2026-07-28`, `rulesReviewedAt: 2026-08-20` |
+
+Each provider exposes its own review date as `rulesReviewedAt` and its sources
+as `docs`, so a cell can always be traced back to the official page it came
+from.
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="OpenAI" href="/providers/openai">
+    Responses API `FunctionTool` with `strict: true`, and the two evidence tiers.
+  </Card>
+  <Card title="Anthropic" href="/providers/anthropic">
+    Accepts everything, enforces nothing. No lossy path.
+  </Card>
+  <Card title="Gemini" href="/providers/gemini">
+    A 22-field OpenAPI subset, uppercase types, and no `additionalProperties`.
+  </Card>
+  <Card title="MCP" href="/providers/mcp">
+    Spec revision `2026-07-28`, local validation instead of probing.
+  </Card>
+</CardGroup>
+
+Then run [`check`](/commands/check) against your own tools — it applies exactly
+these rules and reports them per path.

@@ -1,0 +1,289 @@
+---
+title: Add SchemaPort to an existing project
+navTitle: Existing project
+description: Turn provider-specific tool schemas you already maintain by hand into one canonical definition, without changing what you send.
+keywords:
+  - migration
+  - adoption
+  - canonical tool
+  - existing schemas
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+You already have tool schemas. They are written inline in TypeScript, or in JSON
+next to your handlers, and they are shaped for whichever provider you shipped
+first. Adopting SchemaPort means promoting one of those to the canonical
+definition and generating the rest — not rewriting anything.
+
+The whole migration is four steps, and the first three change nothing about what
+you send to a provider.
+
+<Steps>
+  <Step title="Pick a starting point">
+    Choose the provider schema that has been least distorted by its target.
+  </Step>
+  <Step title="Convert it to the canonical format">
+    Rename one field, and undo any provider-specific encoding.
+  </Step>
+  <Step title="Run check">
+    Find out what the other three targets say about it — before you commit to
+    anything.
+  </Step>
+  <Step title="Compile and switch the call sites">
+    Point each SDK call at the generated file, one provider at a time.
+  </Step>
+</Steps>
+
+## 1. Pick a starting point
+
+A canonical tool is plain JSON Schema, unshaped by any provider. Some of your
+existing schemas are much closer to that than others:
+
+| You have | How good a starting point | Why |
+|---|---|---|
+| **MCP** | Best | An MCP tool *is* the canonical shape: `name`, `description`, `inputSchema`, with the schema untouched. |
+| **Anthropic** | Very good | `input_schema` carries arbitrary JSON Schema verbatim. Anthropic drops nothing — it just does not enforce it. |
+| **OpenAI** | Usable, with care | Strict mode has already rewritten the schema. You must undo that rewrite, or the distortion becomes your contract. |
+| **Gemini** | Last resort | Types are uppercased, integer bounds are decimal strings, and any keyword Gemini cannot express was dropped before you ever saw it. |
+
+<Warning>
+  Do not start from Gemini if you have any alternative. Gemini's `Schema` object
+  has 22 fields; `multipleOf`, `oneOf`, `allOf`, `not`, `uniqueItems`,
+  `exclusiveMinimum`, `exclusiveMaximum`, `prefixItems` and
+  `additionalProperties` have no field at all. If your Gemini schema is the only
+  copy you have, the constraints it lost are lost — they are not recoverable
+  from the file.
+</Warning>
+
+## 2. Convert it to the canonical format
+
+The canonical format is three keys — `name`, an optional `description`, and an
+`inputSchema` that is a JSON Schema object. Full detail on
+[Tool format](/reference/tool-format).
+
+<Tabs>
+<Tab title="From MCP">
+Nothing to do. Copy the tool object into `tools/<name>.json`, minus any MCP
+extras SchemaPort does not model (`annotations`, `icons`, `outputSchema`).
+
+`outputSchema` in particular has no canonical equivalent — 0.1.0 describes tool
+*arguments* only. Keep that part of your MCP server hand-written.
+
+</Tab>
+<Tab title="From Anthropic">
+Rename `input_schema` to `inputSchema`. That is the entire conversion:
+
+```json
+{
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "orderId": { "type": "string", "description": "The order to refund" },
+      "amount": { "type": "number", "minimum": 0, "description": "Amount to refund. Omit to refund the full order." },
+      "refundMethod": { "type": "string", "description": "How to return the funds", "enum": ["original_payment", "store_credit", "bank_transfer"] }
+    },
+    "required": ["orderId"]
+  }
+}
+```
+
+Drop `cache_control`, `input_examples`, `defer_loading` and `allowed_callers` if
+you use them — they are Anthropic tool-definition properties outside the
+canonical format, and SchemaPort will never emit them.
+
+</Tab>
+<Tab title="From OpenAI">
+Rename `parameters` to `inputSchema`, drop `"type": "function"` and
+`"strict": true`, then **undo the strict-mode encoding**:
+
+- For every property whose `type` is a union containing `"null"`, remove
+  `"null"` and take the property out of `required`. It was optional before
+  strict mode forced it to be required-and-nullable.
+- Remove `"additionalProperties": false` from any object that was not genuinely
+  closed. Strict mode requires it on every object, so its presence tells you
+  nothing about your intent.
+
+If you skip this, your canonical schema permanently encodes OpenAI's
+constraints, and every other target inherits a contract that says "always send
+`amount`, possibly as null" — which is not what your tool means.
+
+</Tab>
+<Tab title="From Gemini">
+Rename `parameters` to `inputSchema`, then reverse each Gemini encoding:
+
+- Lowercase the `Type` enum names: `"OBJECT"` → `"object"`, `"STRING"` →
+  `"string"`, and so on.
+- Turn the int64 fields back into numbers: `"maxItems": "20"` → `"maxItems": 20`.
+  The same applies to `minItems`, `minLength`, `maxLength`, `minProperties` and
+  `maxProperties`.
+- Replace `"nullable": true` with whatever you actually meant — usually leaving
+  the property out of `required`.
+- Remove `"format": "enum"` beside a string `enum`; it is a Gemini convention,
+  not JSON Schema.
+- Re-add by hand any constraint Gemini could not carry. Only you know what those
+  were.
+
+</Tab>
+</Tabs>
+
+Put the results in one directory, one tool per file:
+
+```
+tools/
+├── refund-order.json
+└── search-orders.json
+```
+
+`check`, `compile`, `probe` and `diff` all accept a single `.json` file or a
+directory of them.
+
+## 3. Run check before you commit to anything
+
+This is the step that tells you what adopting SchemaPort will actually cost. It
+needs no API key and writes nothing:
+
+```sh
+schemaport check tools/ --targets openai,anthropic,gemini,mcp
+```
+
+For the canonical `refund_order` above, all four targets report something
+different:
+
+| Target | Findings |
+|---|---|
+| OpenAI | 3 errors, 2 warnings — `openai/object-missing-additional-properties`, `openai/strict-optional-property` ×2, `openai/nullable-instead-of-omitted` ×2 |
+| Anthropic | 2 warnings — `anthropic/schema-not-enforced`, `anthropic/constraint-not-enforced` |
+| Gemini | 1 warning — `gemini/constraint-not-enforced` |
+| MCP | Compatible |
+
+**Errors here are not a blocker.** Every one of those OpenAI errors says
+"SchemaPort can compile this", and names the fix:
+
+```
+✗ Optional property `amount` is not allowed in OpenAI strict mode; every property must be listed in `required`.
+  Path: inputSchema.properties.amount
+  SchemaPort can compile this: Emits `amount` as required and nullable.
+  Docs: https://developers.openai.com/api/docs/guides/function-calling
+```
+
+Read the *warnings* carefully instead — those are the ones that survive
+compilation, because they describe something that stays true at runtime.
+`anthropic/schema-not-enforced` is not a defect in your schema; it is the fact
+that Anthropic renders the schema into the tool-use prompt as guidance and does
+not validate the model's arguments against it in the default configuration. That
+was already true of the hand-written schema you have been shipping. `check` is
+just the first thing that told you.
+
+An error `compile` cannot work around — `gemini/invalid-function-name`,
+`gemini/unresolvable-schema-reference`, an OpenAI tool name outside
+`a-z A-Z 0-9 _ -` — is a real blocker, and SchemaPort will not rename your tool
+to fix it. Rename it yourself, or drop that target.
+
+See [Check](/commands/check) and [Diagnostics](/reference/diagnostics).
+
+## 4. Compile, then switch the call sites
+
+```sh
+schemaport compile tools/ --out generated/
+```
+
+You get `generated/<target>/<tool>.json` for every tool and target, plus
+`generated/manifest.json` recording what was done to each one.
+
+Before changing any code, **compare the generated file against the schema you
+have been sending**. For a tool converted faithfully from an existing provider
+schema, they should be identical. Round-tripping an Anthropic tool through the
+canonical format and back out to OpenAI reproduces the OpenAI file byte for
+byte — compilation is deterministic, so `diff` is a real test:
+
+```sh
+diff generated/openai/refund-order.json src/tools/openai/refund-order.json
+```
+
+If they differ, the difference is your answer: either your conversion in step 2
+lost something, or your hand-written schema had been drifting from what you
+believed it said.
+
+Then switch one call site at a time:
+
+```ts
+- import refundOrder from './tools/openai/refund-order.json';
++ import refundOrder from './generated/openai/refund-order.json';
+```
+
+Delete the hand-maintained file only once its generated replacement is in
+production. See [Use generated schemas from
+TypeScript](/guides/typescript) for the import and SDK details — including the
+one behavioural change to watch for, where OpenAI strict mode turns an omitted
+`amount` into `amount: null`.
+
+Success looks like: `check` exits 1 with findings you have read and accepted,
+`compile` exits 0, and the generated files match what you were already sending.
+
+## What if I have four hand-maintained versions?
+
+Then they have drifted, and you do not yet know how. Four schemas maintained by
+hand, edited by different people under different deadlines, are four different
+contracts wearing the same tool name.
+
+Resolve it with `diff` rather than by reading them side by side. Convert each
+one to the canonical format in its own directory, then compare them pairwise:
+
+```sh
+schemaport diff canonical/from-openai canonical/from-anthropic --fail-on any
+```
+
+```
+Tool: refund_order
+
+BREAKING
+- `minimum` of 0 was added, narrowing accepted values.
+  Path: inputSchema.properties.amount.minimum
+- Property `currency` was removed.
+  Path: inputSchema.properties.currency
+
+NON-BREAKING
+- Enum value `"bank_transfer"` added.
+  Path: inputSchema.properties.refundMethod.enum
+
+Result: 2 breaking, 1 non-breaking, 0 informational
+```
+
+That is a complete, path-level inventory of the drift between two copies, in
+seconds. `--fail-on any` is deliberate here — you want every difference, not
+just the dangerous ones.
+
+Three practical notes:
+
+- **Convert before you diff.** Diffing raw provider files is meaningless: the
+  OpenAI copy's `"type": ["number", "null"]` and its extra `required` entries are
+  artefacts of strict mode, not drift. Undo the provider encoding first, as in
+  step 2, or you will chase differences that were never real.
+- **Reconciling is a product decision, not a mechanical one.** For each
+  difference, someone has to decide which behaviour is correct. The union of all
+  four is usually wrong — it is how the drift happened. Take the strictest
+  version that your handler actually implements, and treat the rest as bugs you
+  have now found.
+- **Diff on the whole set, not tool by tool.** `diffToolSets` also reports tools
+  that exist on one side and not the other, and identifies a probable rename by
+  matching identical input schemas. A tool that exists only in your Anthropic
+  copy is exactly the kind of thing hand-maintenance produces.
+
+Once you have one reconciled canonical set, the four-way drift cannot recur:
+generated files are not edited, and a stale one is caught by
+`git diff --exit-code` in CI.
+
+## Next
+
+- [Move between providers](/guides/migrate-providers) — the same tooling, aimed
+  at adding or replacing a target.
+- [Run SchemaPort in CI](/guides/ci) — keep the generated output honest.
+- [Canonical schemas](/concepts/canonical-schemas) — what the format does and
+  does not model.
+
+The canonical format, loading and the diff engine are owned by
+[`core`](https://github.com/schemaport/core); the commands and flags by
+[`cli`](https://github.com/schemaport/cli).

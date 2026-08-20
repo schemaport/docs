@@ -1,47 +1,322 @@
 ---
 title: Quickstart
-description: Guide a new reader through one useful workflow and show them how to verify it.
+description: Check one tool schema against all four providers, then compile it — about five minutes, no API key.
+keywords:
+  - quickstart
+  - check
+  - compile
+  - refund_order
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
 ---
 
-A strong quickstart produces one meaningful result. Replace the placeholders
-below with the shortest supported path for your product.
+In five minutes you will take one canonical tool schema, find out what OpenAI,
+Anthropic, Gemini and MCP each do with it, and write four provider-native
+definitions plus a manifest. Nothing here touches the network.
 
-## Before you begin
-
-List only the requirements needed for this workflow:
-
-- An account or credential, when required
-- A supported runtime, device, browser, or operating system
-- Permission to create or change the resource used in the example
+**Before you start:** a working `schemaport` command. See
+[Installation](/installation) — the packages are not on npm yet, so this is a
+workspace build, and `schemaport …` below means `node cli/dist/cli.js …` unless
+you linked the binary.
 
 <Steps>
-  <Step title="Install the required tool">
-    Give readers one recommended installation command.
+<Step title="Point at a schema">
 
-    ```bash
-    npm install your-package
-    ```
-  </Step>
-  <Step title="Add the minimum configuration">
-    Include only the values needed for the first successful run.
+A canonical tool is plain JSON: a `name`, an optional `description`, and an
+`inputSchema` that is a JSON Schema object. Put one in a `tools/` directory.
 
-    ```bash
-    your-cli init
-    ```
-  </Step>
-  <Step title="Complete the first task">
-    Use a realistic example that produces an observable result.
+```json title="tools/refund-order.json"
+{
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "orderId": { "type": "string", "description": "The order to refund" },
+      "amount": { "type": "number", "minimum": 0, "description": "Amount to refund. Omit to refund the full order." },
+      "refundMethod": { "type": "string", "description": "How to return the funds", "enum": ["original_payment", "store_credit", "bank_transfer"] }
+    },
+    "required": ["orderId"]
+  }
+}
+```
 
-    ```bash
-    your-cli start
-    ```
-  </Step>
-  <Step title="Verify the result">
-    State exactly what the reader should see and how to recover when it does not appear.
-  </Step>
+This is `examples/refund-order/v1/refund-order.json` from the
+[`cli`](https://github.com/schemaport/cli) repository. Copy it, or point the
+commands at that file directly — the transcripts below are that one tool.
+
+Every command accepts a `.json` file or a directory of them. A directory is read
+recursively, skipping `node_modules`, `dist`, `coverage` and dot-directories, so
+pointing at `examples/refund-order/v1` instead would load `search_orders` too
+and print a longer report.
+
+</Step>
+<Step title="Run check">
+
+```bash
+schemaport check tools/
+```
+
+`check` runs every selected provider's rules over every tool. With no
+`--targets`, that is all four.
+
+```text
+Tool: refund_order
+
+OpenAI
+✗ OpenAI strict mode requires `additionalProperties: false` on every object schema.
+  Path: inputSchema.additionalProperties
+  SchemaPort can compile this: Adds `additionalProperties: false`.
+  Docs: https://developers.openai.com/api/docs/guides/structured-outputs
+✗ Optional property `amount` is not allowed in OpenAI strict mode; every property must be listed in `required`.
+  Path: inputSchema.properties.amount
+  SchemaPort can compile this: Emits `amount` as required and nullable.
+  Docs: https://developers.openai.com/api/docs/guides/function-calling
+✗ Optional property `refundMethod` is not allowed in OpenAI strict mode; every property must be listed in `required`.
+  Path: inputSchema.properties.refundMethod
+  SchemaPort can compile this: Emits `refundMethod` as required and nullable.
+  Docs: https://developers.openai.com/api/docs/guides/function-calling
+⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.amount
+  SchemaPort can compile this: Adds `"null"` to the type of `amount`; the key is always present.
+  Docs: https://developers.openai.com/api/docs/guides/function-calling
+⚠ After compilation the model may send `refundMethod: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.refundMethod
+  SchemaPort can compile this: Adds `"null"` to the type of `refundMethod`; the key is always present.
+  Docs: https://developers.openai.com/api/docs/guides/function-calling
+
+Anthropic
+⚠ Anthropic accepts this schema in full but does not validate tool inputs against it by default. The schema is rendered into the tool-use system prompt as guidance, so Claude may return mistyped values or omit required properties. Input validation requires `strict: true`, which SchemaPort does not emit because the strict subset rejects several keywords in this schema family.
+  Path: inputSchema
+  SchemaPort can compile this: Emits the default (non-strict) tool definition, preserving the schema verbatim.
+  Docs: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
+⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
+  Path: inputSchema.properties.amount.minimum
+  SchemaPort can compile this: Preserved verbatim in `input_schema`.
+  Docs: https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations
+
+Gemini
+⚠ `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate function calls with constrained decoding. Under the default `AUTO` mode these guide the model rather than bind it.
+  Path: inputSchema.properties.amount
+  SchemaPort can compile this: Emits the constraint unchanged.
+  Docs: https://ai.google.dev/gemini-api/docs/function-calling
+
+MCP
+✓ Compatible
+
+Result: 3 errors, 5 warnings
+```
+
+</Step>
+<Step title="Read the result">
+
+The command exits **1**. That is the expected result here, and it is the whole
+demonstration — not a problem with your setup.
+
+Exit 1 means at least one `error`-severity diagnostic was found, and an `error`
+means *this canonical schema cannot be handed to that provider directly*. It
+does not mean you are stuck. Each of the three OpenAI errors is followed by
+`SchemaPort can compile this:` and the exact fix, so the failure and the
+remedy arrive together.
+
+Read the four sections as four different answers to the same question:
+
+| Target | Verdict |
+|---|---|
+| OpenAI | Rejected as written. Strict mode has no optional properties and wants every object closed. All three errors are fixable by `compile`. |
+| Anthropic | Accepted in full — but not enforced. `minimum` is preserved in the output and still never binds. |
+| Gemini | Accepted. Whether `minimum` binds depends on `FunctionCallingConfig.mode`. |
+| MCP | `✓ Compatible` — zero diagnostics, nothing to change. |
+
+`✓ Compatible` is printed only when a target produced no diagnostics at all, so
+it never hides a provider that would accept your schema after quietly dropping
+part of it.
+
+<Tip>
+`--fail-on warning` makes those warnings fail the command too;
+`--fail-on never` reports without ever exiting 1. See
+[`check`](/commands/check).
+</Tip>
+
+</Step>
+<Step title="Run compile">
+
+```bash
+schemaport compile tools/ --out generated/
+```
+
+```text
+Tool: refund_order
+
+OpenAI
+✓ generated/openai/refund-order.json
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as the OpenAI `parameters` field.
+  • [safe] enabled-strict-mode at inputSchema
+    Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.
+  • [safe] converted-optional-property-to-nullable at inputSchema.properties.amount
+    Made `amount` required and added `"null"` to its type; strict mode has no optional properties.
+  • [safe] converted-optional-property-to-nullable at inputSchema.properties.refundMethod
+    Made `refundMethod` required and added `"null"` to its type; strict mode has no optional properties.
+  • [safe] added-additional-properties-false at inputSchema.additionalProperties
+    Added `additionalProperties: false`, which strict mode requires on every object.
+⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.amount
+⚠ After compilation the model may send `refundMethod: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.refundMethod
+
+Anthropic
+✓ generated/anthropic/refund-order.json
+  • [safe] renamed-input-schema-field at inputSchema
+    Emitted the canonical `inputSchema` as the Messages API field `input_schema`.
+⚠ Anthropic accepts this schema in full but does not validate tool inputs against it by default. The schema is rendered into the tool-use system prompt as guidance, so Claude may return mistyped values or omit required properties. Input validation requires `strict: true`, which SchemaPort does not emit because the strict subset rejects several keywords in this schema family.
+  Path: inputSchema
+⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
+  Path: inputSchema.properties.amount.minimum
+
+Gemini
+✓ generated/gemini/refund-order.json
+  • [safe] added-enum-format at inputSchema.properties.refundMethod.format
+    Added `format: "enum"`, which the Gemini reference uses to mark an enumerated field.
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
+  • [safe] normalized-type-case at inputSchema
+    Emitted 4 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+⚠ `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate function calls with constrained decoding. Under the default `AUTO` mode these guide the model rather than bind it.
+  Path: inputSchema.properties.amount
+
+MCP
+✓ generated/mcp/refund-order.json
+  No transformations.
+
+Result: 4 files written to generated, 0 refusals
+```
+
+This time the command exits **0**. Every transformation is marked `[safe]`,
+meaning no canonical constraint stopped being enforced, so nothing needed your
+permission. Had any transformation been `[lossy]`, that tool/target pair would
+have been refused and written nothing — see
+[Safe and lossy compilation](/concepts/safe-and-lossy-compilation).
+
+The warnings survive compilation. Losing nothing is not the same as changing
+nothing: `amount` really will arrive as `null` now.
+
+</Step>
+<Step title="Look at the output">
+
+```text
+generated/
+├── manifest.json
+├── anthropic/refund-order.json
+├── gemini/refund-order.json
+├── mcp/refund-order.json
+└── openai/refund-order.json
+```
+
+Each file is the provider-native tool definition, ready to send. Here is the
+OpenAI one — required-and-nullable optionals, a closed object, `strict: true`,
+and `minimum: 0` still intact:
+
+```json title="generated/openai/refund-order.json"
+{
+  "type": "function",
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "orderId": {
+        "type": "string",
+        "description": "The order to refund"
+      },
+      "amount": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "description": "Amount to refund. Omit to refund the full order.",
+        "minimum": 0
+      },
+      "refundMethod": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "How to return the funds",
+        "enum": [
+          "original_payment",
+          "store_credit",
+          "bank_transfer"
+        ]
+      }
+    },
+    "required": [
+      "orderId",
+      "amount",
+      "refundMethod"
+    ],
+    "additionalProperties": false
+  },
+  "strict": true
+}
+```
+
+The three schema paths OpenAI rejected are exactly the three that changed, and
+nothing else did. `manifest.json` records the same story in machine-readable
+form — where each output came from, every transformation with its `lossy` flag,
+and every warning that survived:
+
+```json title="generated/manifest.json (openai section of refund_order)"
+{
+  "output": "openai/refund-order.json",
+  "transformations": [
+    {
+      "code": "converted-optional-property-to-nullable",
+      "path": "inputSchema.properties.amount",
+      "detail": "Made `amount` required and added `\"null\"` to its type; strict mode has no optional properties.",
+      "lossy": false
+    }
+  ],
+  "warnings": [
+    {
+      "code": "openai/nullable-instead-of-omitted",
+      "path": "inputSchema.properties.amount",
+      "message": "After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as \"not supplied\" in the handler for `refund_order`."
+    }
+  ]
+}
+```
+
+One transformation and one warning are shown; the real entry lists all five
+transformations and both warnings from the run above. The full document is
+described in [Manifest](/reference/manifest).
+
+</Step>
 </Steps>
 
-## Choose the next task
+## What you just proved
 
-Link to the guide that naturally follows this result. Avoid ending the reader’s
-journey with a generic list of every feature.
+The canonical schema stayed the source of truth, `check` found the three places
+OpenAI would reject it before a single API call, and `compile` produced output
+for all four providers without dropping `minimum: 0` anywhere.
+
+Compiled output is derived, never authoritative, and compiling the same
+canonical schema always produces byte-identical files — so you can commit
+`generated/` and review it in a pull request, or regenerate it during a build.
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Canonical schemas" href="/concepts/canonical-schemas">
+    What the input format is, and why `inputSchema` must be an object schema.
+  </Card>
+  <Card title="Safe and lossy compilation" href="/concepts/safe-and-lossy-compilation">
+    What happens when a transformation *would* weaken your schema.
+  </Card>
+  <Card title="diff" href="/commands/diff">
+    Catch a new required property before it breaks existing callers.
+  </Card>
+  <Card title="Continuous integration" href="/guides/ci">
+    Wire `check` and `diff` into a pipeline using their exit codes.
+  </Card>
+</CardGroup>

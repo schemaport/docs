@@ -1,0 +1,174 @@
+---
+title: The portability problem
+navTitle: The problem
+description: One tool schema, four providers, four different verdicts — and the worst one is the provider that says yes and then ignores half of it.
+keywords:
+  - portability
+  - strict mode
+  - provider differences
+  - refund_order
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+Tool calling looks portable. Every major provider takes a tool name, a
+description, and a JSON Schema describing the arguments. Copy the schema across,
+change a field name, done.
+
+It is not done. The same schema is accepted by one provider, rejected by
+another, and accepted by a third only after a constraint you wrote stops
+binding anything. The third case is the dangerous one, because nothing tells
+you it happened.
+
+## One schema
+
+Here is a tool that refunds an order. It is unremarkable: two optional
+properties, one enum, one lower bound that exists so nobody can refund a
+negative amount.
+
+```json title="tools/refund-order.json"
+{
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "orderId": { "type": "string", "description": "The order to refund" },
+      "amount": { "type": "number", "minimum": 0, "description": "Amount to refund. Omit to refund the full order." },
+      "refundMethod": { "type": "string", "description": "How to return the funds", "enum": ["original_payment", "store_credit", "bank_transfer"] }
+    },
+    "required": ["orderId"]
+  }
+}
+```
+
+Two questions matter about this schema, and neither has the same answer on all
+four targets:
+
+- Will the provider accept it at all?
+- If it accepts it, will it actually enforce `minimum: 0`?
+
+## Four different answers
+
+This is `schemaport check tools/` over exactly that file, with no editing and no
+network access.
+
+### OpenAI rejects it
+
+```text
+OpenAI
+✗ OpenAI strict mode requires `additionalProperties: false` on every object schema.
+  Path: inputSchema.additionalProperties
+  SchemaPort can compile this: Adds `additionalProperties: false`.
+  Docs: https://developers.openai.com/api/docs/guides/structured-outputs
+✗ Optional property `amount` is not allowed in OpenAI strict mode; every property must be listed in `required`.
+  Path: inputSchema.properties.amount
+  SchemaPort can compile this: Emits `amount` as required and nullable.
+  Docs: https://developers.openai.com/api/docs/guides/function-calling
+✗ Optional property `refundMethod` is not allowed in OpenAI strict mode; every property must be listed in `required`.
+  Path: inputSchema.properties.refundMethod
+  SchemaPort can compile this: Emits `refundMethod` as required and nullable.
+  Docs: https://developers.openai.com/api/docs/guides/function-calling
+⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.amount
+  SchemaPort can compile this: Adds `"null"` to the type of `amount`; the key is always present.
+  Docs: https://developers.openai.com/api/docs/guides/function-calling
+⚠ After compilation the model may send `refundMethod: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.refundMethod
+  SchemaPort can compile this: Adds `"null"` to the type of `refundMethod`; the key is always present.
+  Docs: https://developers.openai.com/api/docs/guides/function-calling
+```
+
+Strict mode has no concept of an optional property, and it wants every object
+closed. The schema as written cannot be handed to OpenAI directly.
+
+That is annoying but honest: you find out immediately. Every finding also states
+the fix, because `compile` can produce a valid strict-mode definition from this
+exact schema without dropping a constraint — the two warnings tell you the price
+in advance. Once `amount` is required-and-nullable, the model sends
+`"amount": null` where it used to omit the key, and your handler has to treat
+`null` as "not supplied".
+
+### Anthropic accepts it and does not enforce it
+
+```text
+Anthropic
+⚠ Anthropic accepts this schema in full but does not validate tool inputs against it by default. The schema is rendered into the tool-use system prompt as guidance, so Claude may return mistyped values or omit required properties. Input validation requires `strict: true`, which SchemaPort does not emit because the strict subset rejects several keywords in this schema family.
+  Path: inputSchema
+  SchemaPort can compile this: Emits the default (non-strict) tool definition, preserving the schema verbatim.
+  Docs: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
+⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
+  Path: inputSchema.properties.amount.minimum
+  SchemaPort can compile this: Preserved verbatim in `input_schema`.
+  Docs: https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations
+```
+
+Nothing was rejected. Nothing was dropped from the JSON either — `minimum: 0`
+is still there in the compiled definition. It simply is not a constraint on
+this provider. Your API call succeeds, your tests pass, and one day
+`amount: -50` arrives.
+
+### Gemini accepts the constraint, conditionally
+
+```text
+Gemini
+⚠ `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate function calls with constrained decoding. Under the default `AUTO` mode these guide the model rather than bind it.
+  Path: inputSchema.properties.amount
+  SchemaPort can compile this: Emits the constraint unchanged.
+  Docs: https://ai.google.dev/gemini-api/docs/function-calling
+```
+
+Whether `minimum: 0` binds here depends on a call-site setting that lives
+nowhere near your schema. SchemaPort reports the condition rather than picking
+an answer for you.
+
+### MCP takes it as written
+
+```text
+MCP
+✓ Compatible
+```
+
+MCP's tool definition is the canonical shape, so nothing has to change.
+
+<Note>
+`✓ Compatible` is printed only when a target produced zero diagnostics. It is
+never printed for a provider that would accept your schema after dropping part
+of it — that case is a warning or an error, by design. See
+[Compatibility](/concepts/compatibility).
+</Note>
+
+## Why hand-porting does not solve this
+
+The obvious workaround is to keep four copies of the schema, one per provider.
+That runs into three problems at once.
+
+**The copies drift.** Add a `currency` property and you have to remember four
+files, in four shapes, with four naming conventions — `inputSchema`,
+`input_schema`, `parameters`. One of them will be missed.
+
+**The interesting differences are invisible.** OpenAI's rejection shows up the
+first time you call the API. Anthropic's non-enforcement of `minimum` never
+shows up at all. You cannot hand-port your way out of a problem you cannot see.
+
+**You lose the contract.** Once four provider-shaped files are the source of
+truth, there is nothing left that says what the tool actually accepts, so
+"did this release break callers?" has no answer.
+
+## What SchemaPort does instead
+
+You keep one canonical schema. It is the contract, and it is the only file you
+edit. See [Canonical schemas](/concepts/canonical-schemas).
+
+- [`check`](/commands/check) reports what each provider will do with it,
+  statically and without credentials — including the silent cases.
+- [`compile`](/commands/compile) produces the four provider-native definitions,
+  recording every transformation and refusing any that would weaken the schema.
+  For `refund_order`, all four targets compile with no loss.
+- [`probe`](/commands/probe) asks the live APIs whether they still accept the
+  compiled output, for when the static rules have gone stale.
+- [`diff`](/commands/diff) compares canonical versions so a new required
+  property cannot ship unnoticed.
+
+Ready to see it run? [Quickstart](/quickstart) takes the schema above and gets
+you to compiled output in four steps.

@@ -1,0 +1,390 @@
+---
+title: OpenAI
+navTitle: OpenAI
+description: How SchemaPort compiles a canonical tool into a Responses API function tool with strict mode, and what strict mode costs.
+keywords:
+  - openai
+  - responses api
+  - strict mode
+  - structured outputs
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+SchemaPort compiles a canonical tool into an OpenAI **Responses API**
+`FunctionTool` with `strict: true`, and tells you exactly which keywords strict
+mode forced it to drop. Behaviour on this page is owned by
+[`provider-openai`](https://github.com/schemaport/provider-openai);
+`rulesReviewedAt` is **2026-08-20**.
+
+## The API surface
+
+The target is `POST /v1/responses`, `tools[]`, always with `strict: true`.
+
+Two reasons for the Responses API over Chat Completions. OpenAI's function
+calling guide points new integrations there, and the two request bodies are not
+interchangeable: Chat Completions nests the function under a `function` key
+while the Responses tool is flat. The `parameters` schema is identical in both,
+so you can re-wrap the output yourself, but this adapter does not emit that
+form and does not probe against it.
+
+Strict mode is not optional either. OpenAI's own guidance is to always enable
+it, because it makes function calls adhere to the schema instead of being
+best-effort. Without it, no constraint would be enforced and every keyword would
+become decorative — which would defeat the point of SchemaPort telling you what
+is enforced. The cost is that strict mode accepts only a subset of JSON Schema,
+and that is where most lossy compiles come from.
+
+## Compiled output
+
+Compiling the `refund_order` example:
+
+```console
+$ schemaport compile ./examples/refund-order/v1/refund-order.json --targets openai --out /tmp/prov-openai
+Tool: refund_order
+
+OpenAI
+✓ /tmp/prov-openai/openai/refund-order.json
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as the OpenAI `parameters` field.
+  • [safe] enabled-strict-mode at inputSchema
+    Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.
+  • [safe] converted-optional-property-to-nullable at inputSchema.properties.amount
+    Made `amount` required and added `"null"` to its type; strict mode has no optional properties.
+  • [safe] converted-optional-property-to-nullable at inputSchema.properties.refundMethod
+    Made `refundMethod` required and added `"null"` to its type; strict mode has no optional properties.
+  • [safe] added-additional-properties-false at inputSchema.additionalProperties
+    Added `additionalProperties: false`, which strict mode requires on every object.
+⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.amount
+⚠ After compilation the model may send `refundMethod: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.refundMethod
+
+Result: 1 file written to /tmp/prov-openai, 0 refusals
+```
+
+The file it wrote:
+
+```json
+{
+  "type": "function",
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "orderId": {
+        "type": "string",
+        "description": "The order to refund"
+      },
+      "amount": {
+        "type": ["number", "null"],
+        "description": "Amount to refund. Omit to refund the full order.",
+        "minimum": 0
+      },
+      "refundMethod": {
+        "type": ["string", "null"],
+        "description": "How to return the funds",
+        "enum": ["original_payment", "store_credit", "bank_transfer"]
+      }
+    },
+    "required": ["orderId", "amount", "refundMethod"],
+    "additionalProperties": false
+  },
+  "strict": true
+}
+```
+
+Three things happened, and all three are worth noticing. `minimum: 0` survived.
+Both optional properties became required and nullable, because strict mode has
+no optional properties. And the root object was closed.
+
+<Warning>
+`{"amount": null}` and "`amount` omitted" are different values. If your handler
+distinguishes them, strict mode cannot carry that distinction — treat `null` as
+"not supplied", which is what the `openai/nullable-instead-of-omitted` warning
+tells you on every compile.
+</Warning>
+
+Compiled output is byte-stable: keys are written in a fixed order, so compiling
+the same tool twice produces identical bytes regardless of key order in your
+source file.
+
+## The supported subset
+
+Compilation uses an **allowlist**. A keyword is emitted only when OpenAI
+documents it as supported; anything else is dropped and recorded, so an
+undocumented keyword can never silently ride along and produce a 400.
+
+| Slot | Emitted verbatim |
+| --- | --- |
+| Structure | `type`, `description`, `enum`, `properties`, `required`, `additionalProperties`, `items`, `anyOf`, `$ref`, `$defs` |
+| Strings | `pattern`, `format` |
+| Numbers | `multipleOf`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` |
+| Arrays | `minItems`, `maxItems` |
+
+Supported `format` values: `date-time`, `time`, `date`, `duration`, `email`,
+`hostname`, `ipv4`, `ipv6`, `uuid`. Any other value is dropped lossily.
+`$defs` and `$ref`, including recursive references, are passed through
+untouched — SchemaPort never inlines them.
+
+## The two evidence tiers
+
+This is the most important thing to understand about the OpenAI target, and the
+place where SchemaPort deliberately refuses to sound more certain than its
+sources.
+
+**Tier 1 — named as unsupported.** OpenAI's structured outputs guide says
+verbatim: "Composition: `allOf`, `not`, `dependentRequired`,
+`dependentSchemas`, `if`, `then`, `else`". Dropping one produces
+`openai/unsupported-keyword`.
+
+**Tier 2 — merely absent from the supported list.** `minLength`, `maxLength`,
+`minProperties`, `maxProperties`, `patternProperties`, `propertyNames`,
+`uniqueItems`, `prefixItems`, `contains`, `minContains`, `maxContains`,
+`unevaluatedProperties`, `unevaluatedItems`.
+
+<Warning>
+**OpenAI's documentation contradicts itself here and SchemaPort does not paper
+over it.** The guide's "Supported `string` properties" list contains only
+`pattern` and `format`, which implies `minLength` and `maxLength` are not
+supported. But a later paragraph says fine-tuned models *additionally* do not
+support `minLength`, `maxLength`, `pattern`, `format` and the numeric bounds —
+which reads as though non-fine-tuned models do support them. OpenAI resolves the
+contradiction nowhere we could find.
+</Warning>
+
+SchemaPort takes the conservative branch: a tier-2 keyword is dropped, the drop
+is `lossy: true`, and the diagnostic
+(`openai/undocumented-constraint-keyword`) states that SchemaPort **could not
+confirm** whether OpenAI enforces it, ignores it or rejects it. It does not
+claim OpenAI rejects it. You are never told a constraint is enforced when it
+might not be.
+
+The practical consequence: a tool that uses `minLength` needs `--allow-lossy`
+for the OpenAI target on this rule alone.
+
+Anything outside all of these lists — a vendor extension such as
+`x-internal-tag`, say — is `openai/unknown-keyword`, also lossy, because
+assuming an unfamiliar keyword is decorative would be the unsafe guess.
+
+## Compatibility rules
+
+All 27 codes are prefixed `openai/`, and each carries a path and a `docsUrl`
+pointing at the official page it came from. In the **Compile** column,
+*fixes* means compile produces usable output and nothing is lost, *fixes
+(lossy)* means output is produced but a constraint is dropped so `--allow-lossy`
+is required, and *refuses* means compile cannot produce usable output at all.
+
+### Tool identity and root schema
+
+| Code | Severity | Compile | Fires when |
+| --- | --- | --- | --- |
+| `openai/tool-name-invalid-characters` | error | refuses | The name uses characters outside `a-z A-Z 0-9 _ -`. |
+| `openai/tool-name-too-long` | error | refuses | The name exceeds 64 characters. |
+| `openai/missing-tool-description` | info | fixes | The tool has no description. |
+| `openai/root-schema-not-object` | error | refuses | `inputSchema.type` is not exactly `object`. |
+| `openai/root-schema-anyof` | error | refuses | The root schema uses `anyOf`, which OpenAI forbids at the root. |
+
+Compile never renames a tool. The name is the identifier your dispatch code
+matches on, so sanitising or truncating it would break the caller.
+
+### Objects
+
+| Code | Severity | Compile | Fires when |
+| --- | --- | --- | --- |
+| `openai/strict-optional-property` | error | fixes | A property is absent from `required`. |
+| `openai/nullable-instead-of-omitted` | warning | fixes | Paired with the above at the same path: the model may send `null` rather than omit the key. |
+| `openai/object-missing-additional-properties` | error | fixes | An object does not set `additionalProperties`. Compile adds `false`. |
+| `openai/additional-properties-true` | error | fixes | An object sets `additionalProperties: true`, which strict mode forbids. |
+| `openai/extra-properties-no-longer-accepted` | warning | fixes | Paired with the above: the model can no longer send the undeclared keys the canonical schema allowed. |
+| `openai/additional-properties-schema` | error | fixes (lossy) | `additionalProperties` is a value schema. Strict mode cannot express an open typed map, so it is erased. |
+
+<Accordion title="Why optional properties produce two diagnostics">
+Two independent facts are both true, and collapsing them loses whichever one you
+drop.
+
+The schema *as written* is not sendable — strict mode rejects a property absent
+from `required` — so `check` must report an error, or a CI run gated on errors
+would pass a schema that cannot be sent at all. That is
+`openai/strict-optional-property`, and `finalizeCompile` drops it from a
+successful compile because the `converted-optional-property-to-nullable`
+transformation is the record there.
+
+Separately, the *compiled* schema behaves differently at runtime: your handler
+now has to treat `null` as "not supplied". That has to survive into the compile
+result and the manifest, so it is a separate warning at the same path,
+`openai/nullable-instead-of-omitted`. Warnings always survive.
+
+`openai/additional-properties-true` and
+`openai/extra-properties-no-longer-accepted` split on the same principle.
+</Accordion>
+
+### Keywords
+
+| Code | Severity | Compile | Fires when |
+| --- | --- | --- | --- |
+| `openai/unsupported-keyword` | error | fixes (lossy) | A tier-1 keyword: `allOf`, `not`, `dependentRequired`, `dependentSchemas`, `if`, `then`, `else`. |
+| `openai/undocumented-constraint-keyword` | error | fixes (lossy) | A tier-2 keyword. The message says the behaviour is unconfirmed. |
+| `openai/unknown-keyword` | error | fixes (lossy) | A keyword SchemaPort does not recognise, such as a vendor extension. |
+| `openai/unsupported-string-format` | error | fixes (lossy) | `format` is outside OpenAI's nine supported values. |
+| `openai/one-of-converted-to-any-of` | error | fixes (lossy) | `oneOf` is used. `anyOf` accepts values matching more than one branch. |
+| `openai/conflicting-definitions-keywords` | error | fixes (lossy) | Both `definitions` and `$defs` are present. SchemaPort refuses to merge them, so `definitions` is dropped and its references dangle. This is a SchemaPort limitation, not an OpenAI restriction. |
+| `openai/const-converted-to-enum` | info | fixes | `const` is emitted as a single-value `enum`. |
+| `openai/annotation-keyword-dropped` | info | fixes | A non-constraining annotation is dropped: `title`, `examples`, `$comment`, `$schema`, `$id`, `$anchor`, `deprecated`, `readOnly`, `writeOnly`, or `nullable: false`. |
+| `openai/default-keyword-dropped` | warning | fixes | `default` is dropped. Accepted values are unchanged, but the model no longer sees the default. |
+| `openai/legacy-definitions-keyword` | warning | fixes | Draft-07 `definitions` is renamed to `$defs` and its references repointed. |
+| `openai/nullable-keyword-converted` | warning | fixes | OpenAPI 3.0 `nullable: true` becomes `"null"` in the type union. |
+
+### Size limits
+
+All five refuse, because trimming a schema to fit a limit would mean deleting
+part of your contract.
+
+| Code | Limit |
+| --- | --- |
+| `openai/too-many-properties` | 5000 total object properties |
+| `openai/schema-too-deep` | 10 levels of nesting |
+| `openai/too-many-enum-values` | 1000 enum values across all properties |
+| `openai/large-enum-too-long` | an enum over 250 values may not exceed 15,000 characters of total string length |
+| `openai/schema-too-large` | 120,000 characters across property names, definition names and enum values |
+
+## Transformations
+
+Every change compile makes is recorded with a stable code, a path, a one-line
+detail and a `lossy` flag. Any lossy transformation makes compile return
+`ok: false` unless you pass `--allow-lossy`. Narrowing — accepting *fewer*
+values — is never lossy.
+
+### Safe
+
+| Code | What it does |
+| --- | --- |
+| `renamed-input-schema-to-parameters` | Emits `inputSchema` as OpenAI's `parameters`. Always applied. |
+| `enabled-strict-mode` | Emits `strict: true`. Always applied. |
+| `converted-optional-property-to-nullable` | Adds the property to `required` and `"null"` to its type union. Always paired with the `openai/nullable-instead-of-omitted` warning. |
+| `added-additional-properties-false` | Adds `additionalProperties: false` where the canonical schema said nothing. |
+| `closed-open-object` | Replaces `additionalProperties: true` with `false`. |
+| `dropped-annotation-keyword` | Drops a keyword that annotates but does not constrain. |
+| `dropped-default-keyword` | Drops `default`. |
+| `converted-const-to-enum` | Emits `const: X` as `enum: [X]`. |
+| `renamed-definitions-to-defs` | Renames draft-07 `definitions` to `$defs`. |
+| `rewrote-definitions-reference` | Repoints a `#/definitions/…` reference at `#/$defs/…`. |
+| `converted-nullable-to-type-union` | Replaces `nullable: true` with `"null"` in the type union. |
+
+### Lossy
+
+| Code | What is lost |
+| --- | --- |
+| `dropped-unsupported-keyword` | A tier-1 keyword. The constraint is no longer enforced anywhere. |
+| `dropped-undocumented-constraint-keyword` | A tier-2 keyword. SchemaPort could not confirm OpenAI would have enforced it. |
+| `dropped-unknown-keyword` | An unrecognised keyword, treated as constraining. |
+| `dropped-unsupported-format` | A `format` outside the supported nine. After the drop, any string is accepted. |
+| `dropped-additional-properties-schema` | An open typed map, replaced with `additionalProperties: false`. The map is gone, not merely untyped. |
+| `dropped-conflicting-definitions` | A `definitions` map colliding with `$defs`; its references are left dangling. |
+| `converted-one-of-to-any-of` | The exactly-one-branch requirement. |
+
+## Probing
+
+<Note>
+**No live OpenAI API call has ever been run for this project.** No API keys
+exist in this environment. `probe` is fully implemented and tested against
+mocked SDK clients only. Everything below describes what it does when you run it
+with your own key.
+</Note>
+
+```bash
+export OPENAI_API_KEY=sk-...              # required
+export SCHEMAPORT_OPENAI_MODEL=gpt-5.6-luna  # optional, overrides the default
+schemaport probe ./tools/refund_order.json --targets openai
+```
+
+| Setting | Value |
+| --- | --- |
+| API key environment variable | `OPENAI_API_KEY` |
+| Model environment variable | `SCHEMAPORT_OPENAI_MODEL` |
+| Default model | `gpt-5.6-luna` |
+| Resolution order | `options.model` → `SCHEMAPORT_OPENAI_MODEL` → default |
+
+`gpt-5.6-luna` is the cheapest model on OpenAI's current pricing page listing
+both `function_calling` and `structured_outputs` under supported features.
+`gpt-5-nano` is cheaper, but OpenAI's deprecations page schedules
+`gpt-5-nano-2025-08-07` for shutdown on 2026-12-11 and names `gpt-5.6-luna` as
+its replacement, so defaulting to it would break for everyone in December.
+
+One `POST /v1/responses` is sent: the compiled tool, a short prompt asking for a
+single placeholder call, `tool_choice` pinned to this tool, and a 1024-token
+output cap. Your function is never executed and no real data is sent. If
+compilation was refused, **no request is made at all**.
+
+Returned arguments are validated against the **canonical** schema, not the
+compiled one — so a constraint OpenAI silently ignored shows up as
+`argumentsValid: false` rather than as a pass. That is also how you settle a
+tier-2 drop for your own schema: `accepted` with `argumentsValid: false` is
+direct evidence that the constraint is not being enforced. More on
+[the probe command](/commands/probe).
+
+## Known limitations
+
+<AccordionGroup>
+  <Accordion title="The optional-property encoding is not self-consistent JSON Schema">
+    OpenAI's documented encoding for an optional enum property is
+    `{"type": ["string","null"], "enum": ["celsius","fahrenheit"]}` — `null` is
+    in the type union but not the enum, so no value satisfies both under a
+    standard validator. SchemaPort emits what OpenAI documents rather than
+    "fixing" it, because the documented form is what the API validates against.
+    Feed the output to a general-purpose JSON Schema validator and expect it to
+    disagree.
+  </Accordion>
+  <Accordion title="Objects with no declared properties become closed and empty">
+    `{"type": "object"}` compiles to
+    `{"type":"object","properties":{},"required":[],"additionalProperties":false}`
+    — an object that accepts nothing but `{}`. Strict mode cannot express "any
+    object". This is a narrowing, so it is not lossy; the
+    `openai/object-missing-additional-properties` diagnostic is the only signal.
+  </Accordion>
+  <Accordion title="References are passed through, never resolved">
+    `$defs` and `$ref` including recursive references go through untouched. Only
+    the exact `#/definitions/…` prefix is rewritten when `definitions` is
+    renamed — a reference reaching a nested `definitions` map another way, or an
+    external reference, is left alone and will not resolve. Probing a schema
+    containing `$ref` reports that returned arguments could not be verified,
+    because core's validator does not resolve references.
+  </Accordion>
+  <Accordion title="A `false` subschema is widened without being recorded">
+    JSON Schema lets a boolean stand where a schema is expected, and `false`
+    accepts no value at all. In version 0.1.0, compiling
+    `{"properties": {"a": false}}` emits `"a": {}` — an unconstrained schema
+    that accepts everything — with no transformation recorded and no diagnostic,
+    so the lossy gate never fires. A `true` subschema is emitted the same way,
+    which is harmless because `true` already accepted every value. Avoid `false`
+    subschemas in a canonical tool you intend to compile for OpenAI;
+    [Gemini](/providers/gemini) reports the same situation as
+    `gemini/boolean-subschema` with a lossy transformation.
+  </Accordion>
+  <Accordion title="Scope">
+    Only `type: 'function'` tools. Custom tools, MCP tools, file search and web
+    search are out of scope, and `output_schema`, `allowed_callers` and
+    `defer_loading` are never emitted because the canonical format has no
+    equivalent. Chat Completions is not a supported output target.
+  </Accordion>
+</AccordionGroup>
+
+## Sources
+
+Rules were derived from these official pages, plus the type declarations shipped
+in `openai@7.5.0` (`resources/responses/responses.d.ts`). They are also exported
+as `openaiProvider.docs`.
+
+| Title | URL |
+| --- | --- |
+| Function calling | https://developers.openai.com/api/docs/guides/function-calling |
+| Structured model outputs — supported schemas | https://developers.openai.com/api/docs/guides/structured-outputs |
+| API reference — `POST /v1/responses` | https://developers.openai.com/api/docs/api-reference/responses/create |
+| API reference — `POST /v1/chat/completions` (function name rules) | https://developers.openai.com/api/docs/api-reference/chat/create |
+| Models — `gpt-5.6-luna` | https://developers.openai.com/api/docs/models/gpt-5.6-luna |
+| Deprecations | https://developers.openai.com/api/docs/deprecations |
+
+Next: compare this target against the others in the
+[compatibility matrix](/providers/compatibility-matrix), or run
+[`check`](/commands/check) over your own tools.

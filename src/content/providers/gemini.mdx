@@ -1,0 +1,367 @@
+---
+title: Gemini
+navTitle: Gemini
+description: Gemini's function declarations take a 22-field OpenAPI subset. See which keywords survive, which are dropped lossily, and why types come out uppercase.
+keywords:
+  - gemini
+  - function calling
+  - function declaration
+  - openapi subset
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+Gemini's `FunctionDeclaration.parameters` is not JSON Schema. It is a `Schema`
+object — "a select subset of an OpenAPI 3.0 schema object" — with exactly 22
+fields, and the API rejects anything else. SchemaPort compiles into that subset,
+keeps more of your schema than you might expect, and refuses to compile the
+seven keywords that have nowhere to go. Behaviour on this page is owned by
+[`provider-gemini`](https://github.com/schemaport/provider-gemini);
+`rulesReviewedAt` is **2026-08-20**.
+
+## The API surface
+
+The target is `FunctionDeclaration` with a `parameters` field. Its 22 accepted
+fields:
+
+```
+anyOf     default    description   enum       example   format
+items     maxItems   maxLength     maxProperties        maximum
+minItems             minLength     minProperties        minimum
+nullable             pattern       properties           propertyOrdering
+required             title         type
+```
+
+That list is the intersection of two independently checkable sources that agree
+exactly: the Gemini Developer API discovery document (`v1beta`, revision
+`20260816`) and the installed SDK's `Schema` interface
+(`@google/genai@2.17.1`). Neither declares `additionalProperties`, `$ref`,
+`$defs`, `oneOf`, `allOf`, `multipleOf`, `exclusiveMinimum`,
+`exclusiveMaximum`, `uniqueItems`, `prefixItems` or `const`.
+
+<Note>
+**`minimum` and `maximum` are genuine `Schema` fields.** They are declared
+`number (double)` in the discovery document and `number` in the SDK type, so
+they compile through untouched — the `refund_order` example, whose `amount`
+carries `minimum: 0`, compiles for Gemini without `--allow-lossy`. So do
+`minLength`, `maxLength`, `minItems`, `maxItems`, `minProperties`,
+`maxProperties` and `pattern`. Gemini keeps more numeric and string constraints
+than [OpenAI's strict subset](/providers/openai) does.
+</Note>
+
+### Why not `parametersJsonSchema`
+
+`FunctionDeclaration` also has a `parametersJsonSchema` field that takes full
+JSON Schema — including `additionalProperties` — and is mutually exclusive with
+`parameters`. Version 0.1.0 always emits `parameters`, so schemas that need
+`additionalProperties` or `$ref` are reported as lossy even though that other
+field might carry them. This is a deliberate scope decision, not a claim that
+the field does not work.
+
+## Compiled output
+
+```console
+$ schemaport compile ./examples/refund-order/v1/refund-order.json --targets gemini --out /tmp/prov-gemini
+Tool: refund_order
+
+Gemini
+✓ /tmp/prov-gemini/gemini/refund-order.json
+  • [safe] added-enum-format at inputSchema.properties.refundMethod.format
+    Added `format: "enum"`, which the Gemini reference uses to mark an enumerated field.
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
+  • [safe] normalized-type-case at inputSchema
+    Emitted 4 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+⚠ `minimum` is sent to Gemini, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate function calls with constrained decoding. Under the default `AUTO` mode these guide the model rather than bind it.
+  Path: inputSchema.properties.amount
+
+Result: 1 file written to /tmp/prov-gemini, 0 refusals
+```
+
+The file it wrote:
+
+```json
+{
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "parameters": {
+    "type": "OBJECT",
+    "properties": {
+      "orderId": {
+        "type": "STRING",
+        "description": "The order to refund"
+      },
+      "amount": {
+        "type": "NUMBER",
+        "description": "Amount to refund. Omit to refund the full order.",
+        "minimum": 0
+      },
+      "refundMethod": {
+        "type": "STRING",
+        "format": "enum",
+        "description": "How to return the funds",
+        "enum": ["original_payment", "store_credit", "bank_transfer"]
+      }
+    },
+    "required": ["orderId"]
+  }
+}
+```
+
+`minimum: 0` survived, `amount` is still optional, and the types came out
+uppercase. Fields are emitted in the fixed order the reference documents, so
+repeated compilation is byte-identical.
+
+### Why types are uppercase
+
+`Schema.type` is the `Type` enum: `STRING`, `NUMBER`, `INTEGER`, `BOOLEAN`,
+`ARRAY`, `OBJECT`, `NULL`. The official guide's REST examples use lowercase and
+the SDK uppercases lowercase input for you, but the SDK's own `Schema` type only
+accepts `Type`, and its converter throws on the literal string `'null'` while
+accepting `'NULL'`. Emitting the enum names is the only form that is correct on
+every path.
+
+### Why some numbers become strings
+
+`minItems`, `maxItems`, `minLength`, `maxLength`, `minProperties` and
+`maxProperties` are declared `string (int64 format)` in the discovery document
+and `string` in the SDK, because proto3 JSON writes int64 as a decimal string.
+SchemaPort emits `"maxItems": "20"`, not `20`. Nothing is lost — the value is
+identical — and the change is recorded as `int64-constraint-as-string`.
+
+## Compatibility rules
+
+Every diagnostic carries a stable `gemini/` code, a path and a `docsUrl`.
+
+### Errors that block compilation entirely
+
+`--allow-lossy` does not help with either of these.
+
+| Code | When |
+| --- | --- |
+| `gemini/invalid-function-name` | The name has characters outside `a-zA-Z0-9_.:-`, or exceeds 128 characters. Compile will not rename your tool. |
+| `gemini/unresolvable-schema-reference` | A `$ref` is recursive, or does not point at a root-level `$defs`/`definitions` entry. It cannot be inlined into a finite schema. |
+
+### Errors compile fixes without losing anything
+
+| Code | Fix |
+| --- | --- |
+| `gemini/unsupported-schema-reference` | Inlines the referenced subschema at the use site. |
+| `gemini/unsupported-const` (string value) | Emits `enum: ["value"]` with `format: "enum"`. |
+
+### Errors compile can only fix lossily
+
+Compilation is refused unless you pass `--allow-lossy`.
+
+| Code | What is lost |
+| --- | --- |
+| `gemini/unsupported-additional-properties` | `additionalProperties: false`, or a schema for extra properties |
+| `gemini/unsupported-one-of` | The exactly-one-branch requirement; `oneOf` becomes `anyOf` |
+| `gemini/unsupported-all-of` | Every `allOf` subschema |
+| `gemini/unsupported-not` | The negated subschema |
+| `gemini/unsupported-multiple-of` | The divisibility constraint |
+| `gemini/unsupported-exclusive-minimum` | The exclusive lower bound — never silently relaxed to an inclusive one |
+| `gemini/unsupported-exclusive-maximum` | The exclusive upper bound |
+| `gemini/unsupported-unique-items` | Array uniqueness |
+| `gemini/unsupported-prefix-items` | Positional tuple types |
+| `gemini/non-string-enum-values` | The whole `enum`; Gemini declares it as `string[]` |
+| `gemini/unsupported-const` (non-string value) | The pinned value |
+| `gemini/unsupported-type` | A `type` value that is not a Gemini `Type` |
+| `gemini/type-with-any-of` | The `type` of a subschema that also has union branches, because Gemini rejects both together |
+| `gemini/boolean-subschema` | A `false` subschema, which accepts nothing and has no Gemini equivalent |
+| `gemini/unsupported-keyword` | Any other keyword with no Gemini field; SchemaPort assumes it constrains values |
+
+### Warnings
+
+The schema compiles, but the compiled form behaves differently or its acceptance
+is uncertain.
+
+| Code | Why |
+| --- | --- |
+| `gemini/constraint-not-enforced` | `minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, `minItems`, `maxItems`, `minProperties`, `maxProperties` are sent, but only `FunctionCallingConfig.mode = VALIDATED` is documented to validate calls with constrained decoding. Under the default `AUTO` mode they guide the model. |
+| `gemini/format-not-enforced` | The reference says any `format` value is allowed and most trigger no special functionality. |
+| `gemini/default-not-enforced` | The reference states `default` is accepted only so schemas carrying it are not rejected, and does not affect validation. |
+| `gemini/missing-function-description` | The Developer API reference marks `FunctionDeclaration.description` **required**; the SDK typings and the Vertex AI reference mark it optional. SchemaPort cannot tell which wins, and will not invent a description. |
+| `gemini/function-name-leading-character` | The name does not start with a letter or underscore. Vertex AI and the SDK require that; the Developer API reference does not mention it. |
+| `gemini/parameter-name-charset` | A top-level parameter name is not `[A-Za-z_][A-Za-z0-9_]*` or exceeds 64 characters. The SDK typings and Vertex AI state this rule; the Developer API reference does not. |
+| `gemini/multi-type-union` | A multi-type `type` array is emitted as `anyOf` branches; whether sibling constraints still apply to each branch is undocumented. |
+
+### Infos
+
+| Code | Why |
+| --- | --- |
+| `gemini/empty-parameters-omitted` | The tool declares no properties, so `parameters` is left unset, as the reference permits. |
+| `gemini/dropped-annotation-keyword` | An annotation such as `examples` or `$schema` was dropped. It constrains no value. |
+
+## Transformations
+
+### Safe
+
+| Code | What it does |
+| --- | --- |
+| `renamed-input-schema-to-parameters` | Emits `inputSchema` as `FunctionDeclaration.parameters`. |
+| `omitted-empty-parameters` | Omits `parameters` for a function with no properties. |
+| `normalized-type-case` | Rewrites `type` values to `Type` enum names. |
+| `int64-constraint-as-string` | Encodes the six int64 fields as decimal strings. |
+| `collapsed-nullable-any-of` | Turns `anyOf: [X, {"type":"null"}]` into `X` plus `nullable: true`. |
+| `converted-null-type-to-nullable` | Moves a `null` member out of a `type` array into `nullable`. |
+| `converted-type-array-to-any-of` | Emits a multi-type `type` array as `anyOf` branches. |
+| `converted-const-to-enum` | Emits a string `const` as a single-value `enum`. |
+| `added-enum-format` | Adds `format: "enum"` beside an `enum`, as the reference prescribes. |
+| `inlined-schema-reference` | Inlines one `$ref`. |
+| `dropped-schema-definitions` | Removes the `$defs`/`definitions` map after inlining. |
+| `dropped-annotation-keyword` | Drops an annotation keyword. |
+| `dropped-open-additional-properties` | Drops `additionalProperties: true`, which constrained nothing. |
+| `converted-true-subschema` | Emits a `true` subschema as an unconstrained schema. |
+
+### Lossy
+
+| Code | What is dropped |
+| --- | --- |
+| `dropped-additional-properties` | `additionalProperties: false` or its schema |
+| `converted-one-of-to-any-of` | The exactly-one-branch requirement |
+| `dropped-all-of` | `allOf` |
+| `dropped-not` | `not` |
+| `dropped-multiple-of` | `multipleOf` |
+| `dropped-exclusive-minimum` | `exclusiveMinimum` |
+| `dropped-exclusive-maximum` | `exclusiveMaximum` |
+| `dropped-unique-items` | `uniqueItems` |
+| `dropped-prefix-items` | `prefixItems` |
+| `dropped-const` | A non-string `const` |
+| `dropped-non-string-enum` | An `enum` with non-string members |
+| `dropped-unknown-type` | A `type` value that is not a Gemini `Type` |
+| `dropped-type-beside-any-of` | `type` on a subschema that also has union branches |
+| `widened-false-subschema` | A `false` subschema, which accepted nothing |
+| `dropped-unsupported-keyword` | Any other unrecognised keyword |
+
+A closed object is the drop you will hit first. `additionalProperties: false` has
+no Gemini field, so compiling it means the object stays open — the compiled
+schema accepts properties the canonical schema rejects, which is exactly what
+lossy means:
+
+```console
+$ schemaport compile ./examples/lossy --targets gemini --out /tmp/pl-g
+Tool: tag_resource
+
+Gemini
+✗ Refused. Nothing was written for this target.
+  Compiling for gemini would weaken this schema: dropped-additional-properties at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
+  Path: inputSchema
+  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
+    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
+  • [safe] normalized-type-case at inputSchema
+    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+  Re-run with --allow-lossy to accept the weaker output.
+
+Result: 0 files written to /tmp/pl-g, 1 refusal
+```
+
+## Probing
+
+<Note>
+**No live Gemini API call has ever been run for this project.** No API keys
+exist in this environment. `probe` is fully implemented and tested against a
+mocked client only. Everything below describes what it does when you run it with
+your own key.
+</Note>
+
+```bash
+export GEMINI_API_KEY="..."      # primary
+# or
+export GOOGLE_API_KEY="..."      # fallback, also read by @google/genai
+schemaport probe ./tools/refund_order.json --targets gemini
+```
+
+| Setting | Value |
+| --- | --- |
+| API key environment variable | `GEMINI_API_KEY`, falling back to `GOOGLE_API_KEY` |
+| Model environment variable | `SCHEMAPORT_GEMINI_MODEL` |
+| Default model | `gemini-2.5-flash-lite` |
+| Resolution order | `options.model` → `SCHEMAPORT_GEMINI_MODEL` → default |
+
+SchemaPort checks `GEMINI_API_KEY` first; note that the `@google/genai` SDK
+itself prefers `GOOGLE_API_KEY` when both are set. With no key at all, probing
+returns `status: 'error'` with `errorKind: 'missing-credentials'` — that is not
+a schema rejection.
+
+The default is the cheapest model on the Gemini API pricing page whose model
+card lists "Function calling: Supported". Override it per run:
+
+```bash
+SCHEMAPORT_GEMINI_MODEL=gemini-3.7-flash schemaport probe ./tools/refund_order.json --targets gemini
+```
+
+One `generateContent` call is sent: the compiled declaration, the one-line probe
+prompt, and a 512-token output cap. **No `toolConfig` is sent**, so the request
+uses the default `AUTO` function-calling mode, and every accepted result carries
+a note saying so. `ANY` mode is documented to reject "very large or deeply
+nested schemas", which would turn a fine schema into a false rejection, and
+`VALIDATED` would enable constrained decoding and hide exactly the enforcement
+gaps the probe exists to reveal.
+
+Returned arguments are validated against the **canonical** schema, so
+`accepted` with `argumentsValid: false` is the interesting case: Gemini took the
+schema, but the model produced arguments the canonical schema rejects — usually
+one of the keywords listed under `gemini/constraint-not-enforced`.
+
+## Known limitations
+
+<AccordionGroup>
+  <Accordion title="Enforcement is a warning, never a promise">
+    SchemaPort sends the constraints Gemini accepts but does not claim the model
+    obeys them. Only `FunctionCallingConfig.mode = VALIDATED` is documented to
+    validate function calls with constrained decoding, and the probe
+    deliberately does not use it.
+  </Accordion>
+  <Accordion title="Numbers in enums are not re-typed">
+    The reference documents writing integer enums as quoted strings —
+    `{type: INTEGER, format: enum, enum: ["101", "201"]}`. SchemaPort will not
+    change your value types on your behalf, so a non-string enum is reported as
+    lossy instead.
+  </Accordion>
+  <Accordion title="propertyOrdering is passed through, never generated">
+    Adding one would change what the model emits, and SchemaPort does not invent
+    schema content.
+  </Accordion>
+  <Accordion title="Only top-level parameter names are name-checked">
+    The naming rule SchemaPort found is stated for parameters, not for nested
+    property names.
+  </Accordion>
+  <Accordion title="Vertex AI is not a separate target">
+    Vertex AI's `Schema` additionally declares `additionalProperties`, `defs`
+    and `ref`, but the installed SDK's `Schema` type declares none of them and
+    its converter deletes `additionalProperties` before sending on both
+    backends. The `gemini` target therefore applies the narrower Developer API
+    rules everywhere.
+  </Accordion>
+  <Accordion title="Definitions are checked at their use sites">
+    `check` runs after `$ref` inlining, so a `$defs` entry that nothing
+    references is dropped without being checked, and one referenced twice is
+    reported twice — once per path where it lands.
+  </Accordion>
+</AccordionGroup>
+
+## Sources
+
+Rules come from these sources, which are also exported as
+`geminiProvider.docs`. The `ai.google.dev/api/caching#Schema` anchor renders
+client side and could not be confirmed during review, so it is listed as a
+source but is never used as a diagnostic's `docsUrl`.
+
+| Title | URL |
+| --- | --- |
+| Gemini API — Function calling | https://ai.google.dev/gemini-api/docs/function-calling |
+| API reference — FunctionDeclaration | https://ai.google.dev/api/caching#FunctionDeclaration |
+| API reference — Schema | https://ai.google.dev/api/caching#Schema |
+| Developer API discovery document (v1beta, revision 20260816) | https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta |
+| Vertex AI discovery document (v1, revision 20260808) | https://aiplatform.googleapis.com/$discovery/rest?version=v1 |
+| Vertex AI reference — Schema | https://cloud.google.com/vertex-ai/docs/reference/rest/v1/Schema |
+| Gemini API — Structured output | https://ai.google.dev/gemini-api/docs/structured-output |
+| Gemini 2.5 Flash-Lite model card | https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-lite |
+| `@google/genai` TypeScript SDK (reviewed at 2.17.1) | https://github.com/googleapis/js-genai |
+
+Next: compare Gemini against the other three in the
+[compatibility matrix](/providers/compatibility-matrix), or read about
+[safe and lossy compilation](/concepts/safe-and-lossy-compilation).

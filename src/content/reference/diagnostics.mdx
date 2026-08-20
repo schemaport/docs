@@ -1,0 +1,176 @@
+---
+title: Diagnostics
+navTitle: Diagnostics
+description: The diagnostic shape, the three severity levels, what compile.supported and compile.lossy promise, and why codes rather than messages are the interface you filter on in CI.
+keywords:
+  - diagnostics
+  - severity
+  - diagnostic codes
+  - compile.lossy
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+A diagnostic is SchemaPort's unit of "here is something you should know about
+this tool on this provider". [`check`](/commands/check) returns them;
+[`compile`](/commands/compile) carries the relevant ones through into its result
+and into the [manifest](/reference/manifest).
+
+## Shape
+
+```ts
+interface Diagnostic {
+  providerId: string;      // 'openai'
+  toolName: string;        // 'refund_order'
+  severity: 'error' | 'warning' | 'info';
+  code: string;            // 'openai/strict-optional-property'
+  message: string;         // one short human explanation
+  path: string;            // 'inputSchema.properties.amount'
+  compile: CompileAbility; // what compile() will do about it
+  docsUrl?: string;        // the official page the rule came from
+}
+```
+
+`--format json` emits these verbatim. In text mode the same object is rendered as
+a marker, the message, the `Path:` line, one line about compilation, and the
+`Docs:` line when the provider supplied a URL.
+
+<ResponseField name="path" type="string">
+A dotted path into the canonical tool, such as
+`inputSchema.properties.history.items.properties.note`. Array positions use
+`[0]`; anything that is not a plain identifier is bracketed and JSON-quoted. See
+[Tool format](/reference/tool-format#schema-paths).
+</ResponseField>
+
+<ResponseField name="docsUrl" type="string">
+The provider's own documentation page the rule was derived from. Present only
+when the adapter supplied one. It is there so you can check the rule against the
+provider rather than taking SchemaPort's word for it.
+</ResponseField>
+
+## Severity levels
+
+| Severity | Marker | Meaning |
+|---|---|---|
+| `error` | `✗` | The provider will reject this schema as written, **or** compiling it requires a lossy transformation. |
+| `warning` | `⚠` | The schema is usable, but the provider represents or enforces part of it differently. |
+| `info` | `ℹ` | Worth knowing. Nothing changes. |
+
+<Note>
+An `error` does not mean you are stuck. It means the canonical schema cannot be
+handed to that provider **directly** — and the usual fix is `schemaport compile`,
+which the diagnostic itself tells you. Check `compile.supported` before you
+change your schema.
+</Note>
+
+Warnings are where the honest, uncomfortable facts live: "your optional property
+will arrive as `null`", "this constraint is accepted but not promised to be
+enforced". They are not noise to be silenced. They are the difference between a
+schema that validates and a schema that is actually enforced at runtime.
+
+`check` exits `1` when any `error` is present, configurable with `--fail-on`.
+`info` never affects the exit code.
+
+## `compile`: what happens next
+
+Every diagnostic states what compilation will do about it. This is what lets
+`check` answer "can SchemaPort fix this for me?" rather than only complaining.
+
+```ts
+interface CompileAbility {
+  supported: boolean; // can compile() produce usable output despite this?
+  lossy: boolean;     // does the fix drop or weaken a canonical constraint?
+  detail: string;     // "Emits `amount` as required and nullable."
+}
+```
+
+The two booleans give three meaningful combinations, and each renders as a
+different line in `check` output:
+
+| `supported` | `lossy` | Text line | What it means for you |
+|---|---|---|---|
+| `true` | `false` | `SchemaPort can compile this: …` | Run `compile`. Nothing is lost. |
+| `true` | `true` | `SchemaPort can compile this with --allow-lossy: …` | Compilation is refused unless you pass `--allow-lossy`. The compiled schema will accept inputs your canonical schema rejects. |
+| `false` | — | `SchemaPort cannot compile this: …` | No safe representation exists for this target. Change the schema, or drop the target. |
+
+`detail` is the provider's own wording for the fix. The CLI adds only the part
+about whether you need `--allow-lossy` — the provider decides what happens, the
+CLI decides how to say it to you.
+
+<Warning>
+`supported: true, lossy: true` is the case worth reading twice. Compilation will
+succeed if you ask for it, and the result will be a schema that permits calls
+your canonical schema would reject. That is a real change in behaviour, recorded
+as a `[lossy]` transformation in the [manifest](/reference/manifest) so it
+survives code review.
+</Warning>
+
+## Diagnostic codes
+
+Codes are stable, machine-readable, and namespaced by the adapter that raised
+them:
+
+```
+<providerId>/<kebab-case-rule>
+```
+
+Real examples, all observed in a `check` run over the refund-order example:
+
+```
+openai/object-missing-additional-properties
+openai/strict-optional-property
+openai/nullable-instead-of-omitted
+anthropic/schema-not-enforced
+anthropic/constraint-not-enforced
+gemini/constraint-not-enforced
+```
+
+The namespace tells you which repository owns the rule, which is how a change in
+a provider package traces to the pages and the CI rules it affects. For the full
+per-provider list, see [OpenAI](/providers/openai),
+[Anthropic](/providers/anthropic), [Gemini](/providers/gemini) and
+[MCP](/providers/mcp).
+
+### `core/` codes
+
+`core/` codes come from core itself rather than from a provider. There is
+currently one: `core/lossy-transformation-refused`, added when compilation is
+refused because a transformation would weaken the schema.
+
+## Filter on codes, not on messages
+
+Codes are part of the public interface. Messages are written for humans and may
+be reworded in any release.
+
+```sh
+# Stable: select on the code.
+schemaport check tools --format json --fail-on never \
+  | jq '[.tools[].targets[].diagnostics[] | select(.code == "openai/strict-optional-property")] | length'
+```
+
+Do not grep the text output for a phrase. A reworded message is not a breaking
+change; a renamed code is, and will be treated as one.
+
+The same applies to transformation codes in the manifest and to change codes from
+[`diff`](/commands/diff). All three are stable identifiers with human-readable
+text alongside them, and the text is the part that moves.
+
+## Ordering
+
+Diagnostics are sorted by severity, then path, then code, using a comparison that
+does not depend on the machine's locale. Provider adapters and the CLI both use
+it, so identical inputs always produce identically ordered output — which is what
+makes a `check` report diffable between runs.
+
+## Ownership
+
+The `Diagnostic` type, the severity levels, the `CompileAbility` contract and the
+sort order belong to [`core`](https://github.com/schemaport/core). Every
+individual code, message and `docsUrl` belongs to the provider package whose
+namespace it carries. The CLI raises no diagnostics of its own.
+
+## Next
+
+- [Check](/commands/check) — the command that produces them
+- [Safe and lossy compilation](/concepts/safe-and-lossy-compilation) — the policy behind `compile.lossy`
+- [Exit codes](/reference/exit-codes) — how severity becomes an exit code

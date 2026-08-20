@@ -1,0 +1,167 @@
+---
+title: Installation
+description: Build the SchemaPort CLI from the six source repositories. The npm packages are not published yet.
+keywords:
+  - install
+  - npm
+  - workspace
+  - node
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+SchemaPort 0.1.0 is a Node CLI. When you are done here, `schemaport --version`
+prints the CLI version and the version of `@schemaport/core` it was built
+against, and you are ready for the [Quickstart](/quickstart).
+
+<Warning>
+**The packages are not published to npm yet.** `npm install -g schemaport` does
+not work today — the registry has no `schemaport` package and no
+`@schemaport/*` scope. Use the workspace build below.
+</Warning>
+
+## Requirements
+
+- **Node 20 or newer.** The CLI uses `parseArgs` from `node:util` and ships as
+  ES modules.
+- `npm`, for the workspace link step.
+- No API key. `check`, `compile` and `diff` never contact a provider. Only
+  [`probe`](/commands/probe) does.
+
+## Build from source
+
+SchemaPort is six independent repositories that are developed together in one
+npm workspace. `core` depends on nothing, each provider package depends only on
+`core`, and the CLI depends on `core` and all four providers — so they have to
+be built in that order, which is what the workspace `build` script does.
+
+<Steps>
+<Step title="Clone the six repositories side by side">
+
+Each repository is its own git repo under the
+[`schemaport`](https://github.com/schemaport) organisation. Clone them into one
+directory:
+
+```bash
+mkdir schemaport && cd schemaport
+git clone https://github.com/schemaport/core.git core
+git clone https://github.com/schemaport/provider-openai.git provider-openai
+git clone https://github.com/schemaport/provider-anthropic.git provider-anthropic
+git clone https://github.com/schemaport/provider-gemini.git provider-gemini
+git clone https://github.com/schemaport/provider-mcp.git provider-mcp
+git clone https://github.com/schemaport/cli.git cli
+```
+
+</Step>
+<Step title="Add the workspace root">
+
+The directory that holds the six repositories is an npm workspace root. It is
+not itself a repository and is not published — its only job is to link the six
+packages to each other so `@schemaport/core` resolves without a `file:`
+dependency.
+
+```json title="package.json"
+{
+  "name": "schemaport-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "core",
+    "provider-openai",
+    "provider-anthropic",
+    "provider-gemini",
+    "provider-mcp",
+    "cli"
+  ],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "npm run build -w @schemaport/core && npm run build -w @schemaport/provider-openai && npm run build -w @schemaport/provider-anthropic && npm run build -w @schemaport/provider-gemini && npm run build -w @schemaport/provider-mcp && npm run build -w schemaport",
+    "test": "npm run test --workspaces",
+    "lint": "npm run lint --workspaces"
+  }
+}
+```
+
+</Step>
+<Step title="Install and build">
+
+```bash
+npm install
+npm run build
+```
+
+`npm install` links the workspace packages; `npm run build` compiles each
+package's TypeScript to `dist/` in dependency order and marks `cli/dist/cli.js`
+executable.
+
+</Step>
+<Step title="Verify">
+
+The CLI entry point is `cli/dist/cli.js`:
+
+```bash
+node cli/dist/cli.js --version
+```
+
+```text
+schemaport 0.1.0
+@schemaport/core 0.1.0
+```
+
+`node cli/dist/cli.js --help` lists the four commands, the targets, and the exit
+codes.
+
+</Step>
+</Steps>
+
+<Tip>
+Every example in these docs writes the command as `schemaport …`. From a
+workspace build, read that as `node cli/dist/cli.js …`.
+</Tip>
+
+## When the packages are published
+
+<Warning>
+The commands in this section **do not work yet**. They are the intended install
+path for the first published release, recorded here so the shape is not a
+surprise.
+</Warning>
+
+The recommended form will be a pinned dev dependency, because compiled output
+and its manifest are tied to the version that produced them, and a pinned
+version keeps CI stable when provider rules change:
+
+<Tabs>
+<Tab title="Project (recommended)">
+
+```bash
+npm install --save-dev schemaport
+npx schemaport --help
+```
+
+</Tab>
+<Tab title="Global">
+
+```bash
+npm install -g schemaport
+schemaport --version
+```
+
+</Tab>
+</Tabs>
+
+The published `schemaport` package will carry `@schemaport/core` and the four
+provider packages as its only runtime dependencies. There is no
+argument-parsing dependency and no plugin system.
+
+Installing [`@schemaport/core`](https://github.com/schemaport/core) on its own
+will only be worth doing if you are embedding SchemaPort in your own tooling or
+writing a provider adapter — see the [TypeScript guide](/guides/typescript).
+
+## Next
+
+- [Quickstart](/quickstart) — check and compile the `refund_order` example.
+- [Configuration](/reference/configuration) — set default targets and output
+  directory in `schemaport.config.json`.
+- [Exit codes](/reference/exit-codes) — what `1`, `2` and `3` each mean before
+  you wire this into CI.

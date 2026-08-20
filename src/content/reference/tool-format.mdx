@@ -1,0 +1,230 @@
+---
+title: Canonical tool format
+navTitle: Tool format
+description: The one input format SchemaPort accepts — required fields, the supported JSON Schema subset, source file layouts, directory loading, and what is deliberately unsupported.
+keywords:
+  - canonical tool
+  - inputSchema
+  - JSON Schema
+  - loading
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+SchemaPort has one input format. Every provider adapter reads it and nothing else
+is accepted. It is deliberately close to what most tool-calling APIs already use,
+so adopting SchemaPort rarely means rewriting anything.
+
+```json
+{
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "orderId": { "type": "string", "description": "The order to refund" },
+      "amount": { "type": "number", "minimum": 0 }
+    },
+    "required": ["orderId"]
+  }
+}
+```
+
+## Fields
+
+| Field | Required | Rules |
+|---|---|---|
+| `name` | yes | Non-empty string, no whitespace, at most 128 characters. Provider packages apply their own stricter naming rules on top. |
+| `description` | no | A string when present. |
+| `inputSchema` | yes | A JSON Schema object that must declare `"type": "object"`. |
+
+`inputSchema` must be an object schema because tool arguments are always a named
+set. A tool taking a bare string is not expressible, and no target supports it.
+
+Anything else in the file is preserved rather than stripped, so nothing is
+silently lost before a provider adapter sees it.
+
+## Source files
+
+A `.json` file may contain any of three shapes.
+
+<Tabs>
+  <Tab title="One tool">
+```json
+{
+  "name": "refund_order",
+  "inputSchema": { "type": "object", "properties": {} }
+}
+```
+  </Tab>
+  <Tab title="An array">
+```json
+[
+  { "name": "refund_order", "inputSchema": { "type": "object", "properties": {} } },
+  { "name": "search_orders", "inputSchema": { "type": "object", "properties": {} } }
+]
+```
+  </Tab>
+  <Tab title="A tools wrapper">
+```json
+{
+  "tools": [
+    { "name": "refund_order", "inputSchema": { "type": "object", "properties": {} } }
+  ]
+}
+```
+  </Tab>
+</Tabs>
+
+Mix them freely across files in one directory. Every command accepts either a
+single `.json` file or a directory of them.
+
+### Directory loading
+
+Directories are walked **recursively**. Three directory names are always skipped
+— `node_modules`, `dist` and `coverage` — as is any entry whose name begins with
+a dot. Only files ending in `.json` are read.
+
+A directory containing no `.json` tool definitions is an error, not an empty
+result.
+
+Loading never throws. Malformed files are collected and reported together, so one
+broken file does not hide the rest of the directory:
+
+```console
+$ schemaport check tools
+✗ tools/broken.json: SchemaPort does not support boolean subschemas. Use `{}` to accept any value, or remove the entry to disallow it.
+  Path: inputSchema.properties.tags
+✗ tools/broken.json: `name` must be at most 128 characters and contain no whitespace.
+  Path: name
+Result: 2 input errors
+```
+
+Any load error stops the command and exits `2`. Nothing is checked, compiled or
+probed on a partially valid input set.
+
+Tools come back **sorted by name**, which is what makes every downstream output
+deterministic regardless of file-system ordering.
+
+### Duplicate names
+
+Tool names must be unique across everything one command loads. The compiled
+output directory is keyed by tool name, so duplicates would silently overwrite
+each other.
+
+Because the walk is recursive, this applies to the whole tree under the path you
+pass. A layout that keeps two versions side by side loads fine one version at a
+time, and fails when you point at the parent:
+
+```console
+$ schemaport check tools
+✗ tools/v2/refund-order.json: Duplicate tool name `refund_order`, already defined in /private/tmp/sp-dup/tools/v1/refund-order.json.
+✗ tools/v2/search-orders.json: Duplicate tool name `search_orders`, already defined in /private/tmp/sp-dup/tools/v1/search-orders.json.
+✗ tools/v2/refund-order.json: Duplicate tool name `refund_order`, already defined in /private/tmp/sp-dup/tools/v1/refund-order.json.
+✗ tools/v2/search-orders.json: Duplicate tool name `search_orders`, already defined in /private/tmp/sp-dup/tools/v1/search-orders.json.
+Result: 4 input errors
+```
+
+Each duplicate appears twice: once from the directory walk, and once from the
+check that runs across all the paths on one command line. The path of the
+already-defined tool is printed absolute.
+
+Keep version directories as siblings and point commands at one of them —
+`schemaport check tools/v1` — and [`diff`](/commands/diff) at both.
+
+## Supported JSON Schema
+
+SchemaPort targets the common cases well rather than implementing all of JSON
+Schema. The keywords below are understood by the loader, the schema walker,
+[`diff`](/commands/diff) and value validation. Whether a keyword *survives
+compilation* is a separate, per-provider question — see the
+[compatibility matrix](/providers/compatibility-matrix).
+
+| Group | Keywords |
+|---|---|
+| Types | `object`, `array`, `string`, `number`, `integer`, `boolean`, `null`, and unions such as `["string", "null"]` |
+| Objects | `properties`, `required`, `additionalProperties` (boolean or schema), `minProperties`, `maxProperties` |
+| Arrays | `items`, `prefixItems`, `minItems`, `maxItems`, `uniqueItems` |
+| Numbers | `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf` |
+| Strings | `minLength`, `maxLength`, `pattern` |
+| Values | `enum`, `const`, `default`, `examples` |
+| Composition | `anyOf`, `oneOf`, `allOf`, `not` |
+| Metadata | `title`, `description`, `format` |
+| References | `$ref`, `$defs`, `definitions` — parsed and walked, never resolved |
+
+Loading also validates the ones it understands: `required` must list properties
+that are actually declared, `enum` must be a non-empty array, the numeric
+keywords must be numbers, and `pattern` must be a valid regular expression.
+
+## What is deliberately unsupported
+
+<AccordionGroup>
+  <Accordion title="$ref is never resolved">
+`$ref`, `$defs` and `definitions` are parsed and walked, but a reference is never
+followed. Anything that would require following one reports that it could not be
+verified rather than passing silently — value validation says the value could not
+be checked instead of returning a pass.
+
+**Recursive schemas are therefore not supported.** A schema that refers to itself
+cannot be expressed.
+  </Accordion>
+  <Accordion title="Boolean subschemas are rejected">
+JSON Schema permits `{"properties": {"x": true}}` and `{"items": false}`.
+SchemaPort's canonical format does not. The schema walker only descends into
+objects, so a boolean would be skipped silently and the property could disappear
+from compiled output with no diagnostic. Loading fails with a clear message
+instead.
+
+Use `{}` to accept any value, or omit the entry to disallow it.
+
+`additionalProperties` is exempt — a boolean is its normal form there, and it is
+the one place SchemaPort reads one.
+
+The rejection covers booleans under `properties`, `$defs`, `definitions`,
+`items`, `not`, and any element of `prefixItems`, `anyOf`, `oneOf` or `allOf`.
+  </Accordion>
+  <Accordion title="No outputSchema">
+The canonical format describes a tool's **arguments** only. MCP's `outputSchema`
+and provider structured-output response schemas are out of scope for 0.1.0.
+  </Accordion>
+  <Accordion title="No if/then/else, dependentSchemas or patternProperties">
+These are not part of the supported subset. `not` is walked so that a boolean
+inside it is caught, but it is not evaluated during value validation, and neither
+are `if`/`then`/`else` or `dependentSchemas`. `format` is not enforced —
+providers treat it as advisory.
+  </Accordion>
+  <Accordion title="No source adapters">
+There is no custom schema language and no Zod, Pydantic, TypeBox or OpenAPI
+source adapter in 0.1.0. Canonical schemas are plain JSON Schema files. Source
+adapters can be added cleanly on top later. For generating TypeScript types from
+a canonical tool, see [TypeScript](/guides/typescript).
+  </Accordion>
+</AccordionGroup>
+
+## Schema paths
+
+Every diagnostic, transformation and change carries a dotted path, so you can
+find the exact keyword being discussed:
+
+```
+inputSchema.properties.amount.minimum
+inputSchema.properties.history.items.properties.note
+inputSchema.anyOf[1]
+inputSchema.properties["order id"]
+```
+
+Plain identifiers use dots, array positions use `[0]`, and anything else is
+bracketed and JSON-quoted.
+
+## Ownership
+
+The canonical format, the loader and the supported keyword subset belong to
+[`core`](https://github.com/schemaport/core). Provider packages layer their own
+stricter rules on top of it — a name that is valid canonically can still be
+rejected by a target.
+
+## Next
+
+- [Canonical schemas](/concepts/canonical-schemas) — why one format at all
+- [Check](/commands/check) — what each provider makes of your schema
+- [Compatibility matrix](/providers/compatibility-matrix) — which keywords survive where

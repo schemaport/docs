@@ -1,0 +1,169 @@
+---
+title: Configuration file
+navTitle: Configuration
+description: Every key of schemaport.config.json, how it interacts with command-line flags, and a worked example.
+keywords:
+  - schemaport.config.json
+  - configuration
+  - schemas
+  - targets
+  - output
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+`schemaport` looks for `schemaport.config.json` in your working directory. It is
+optional, JSON only, and deliberately tiny: four keys, no TypeScript config
+loader, no plugin resolution. Its job is to let you type `schemaport check`
+instead of repeating the same three flags all day.
+
+```json
+{
+  "schemas": "tools",
+  "targets": ["openai", "anthropic", "gemini", "mcp"],
+  "output": "generated",
+  "allowLossy": false
+}
+```
+
+## Keys
+
+<ParamField path="schemas" type="string">
+Default input path — a file or a directory — used when no path is given on the
+command line. Replaces `<path...>`.
+</ParamField>
+
+<ParamField path="targets" type="string[]">
+Default target ids. Replaces `--targets`. Validated exactly like the flag: an
+unknown id exits `2` and lists the valid ids.
+</ParamField>
+
+<ParamField path="output" type="string">
+Default output directory for `compile`. Replaces `--out`, which is otherwise
+required.
+</ParamField>
+
+<ParamField path="allowLossy" type="boolean">
+Default lossy-compilation setting for `compile` and `probe`. Replaces
+`--allow-lossy`.
+</ParamField>
+
+Any other key is a usage error, as is a value of the wrong type:
+
+```console
+$ schemaport check tools --targets mcp
+✗ Unknown key `provider` in /private/tmp/sp-cfg/schemaport.config.json. Valid keys are: schemas, targets, output, allowLossy.
+Run `schemaport check --help` for usage.
+```
+
+Paths in the config file are resolved relative to your **working directory**, not
+to the location of the config file.
+
+## Precedence
+
+Command-line arguments always win.
+
+```sh
+# targets come from the config file
+schemaport check
+
+# --targets overrides it for this run
+schemaport check --targets mcp
+```
+
+`schemas` supplies only a default. Any path on the command line replaces it
+entirely — the two are never merged. The same is true of `targets`: the flag
+replaces the list, it does not add to it.
+
+| Setting | Command line | Config key | Built-in default |
+|---|---|---|---|
+| Input paths | `<path...>` | `schemas` | none — a missing path exits `2` |
+| Targets | `--targets` | `targets` | all four; `openai,anthropic,gemini` for `probe` |
+| Output directory | `--out` | `output` | none — `compile` exits `2` without one |
+| Lossy compilation | `--allow-lossy` | `allowLossy` | `false` |
+
+<Warning>
+`allowLossy` is the one setting the command line cannot turn **off**. There is no
+`--no-allow-lossy` — passing it is an unknown-option usage error — so a config
+file with `"allowLossy": true` applies to every `compile` and `probe` run in that
+directory. Leave it `false` (or absent) and pass `--allow-lossy` per run, so that
+accepting a weaker schema stays a deliberate act.
+</Warning>
+
+## `--config <file>`
+
+Load a different file instead of `./schemaport.config.json`:
+
+```sh
+schemaport check --config config/schemaport.ci.json
+```
+
+The path is resolved relative to your working directory. A `--config` file that
+does not exist is a usage error and exits `2`. A missing
+`schemaport.config.json` is not, because the file is optional by design.
+
+## `diff` and the config file
+
+[`diff`](/commands/diff) reads nothing from the config file and does not accept
+`--config`: it takes its two paths explicitly, compares canonical schemas and
+contacts no providers, so there is nothing to configure.
+
+The file is still **loaded** before any command runs, though, so a malformed
+config in your working directory fails a `diff` as well:
+
+```console
+$ schemaport diff v1 v2
+✗ `targets` in /private/tmp/sp-cfg/schemaport.config.json must be an array of target ids.
+Run `schemaport diff --help` for usage.
+```
+
+That is a broken file, not a `diff` that secretly reads configuration.
+
+## A worked example
+
+```
+my-agent/
+├── schemaport.config.json
+├── tools/
+│   ├── refund-order.json
+│   └── search-orders.json
+└── generated/
+```
+
+```json
+{
+  "schemas": "tools",
+  "output": "generated"
+}
+```
+
+With that in place:
+
+```sh
+schemaport check              # checks tools/ against all four targets
+schemaport compile            # writes generated/ and generated/manifest.json
+schemaport probe              # probes tools/ against openai, anthropic, gemini
+schemaport check --targets mcp   # the flag still wins for one run
+```
+
+`targets` is left out on purpose. Checking against all four is the useful
+default: narrowing it hides the incompatibilities you would rather find now than
+after a provider migration.
+
+<Tip>
+Keep a second file for CI when the two differ — for example a `--fail-on`
+policy that only applies to the pipeline — and select it with `--config`. Do not
+put credentials in either file; probe reads API keys from the environment only.
+</Tip>
+
+## Ownership
+
+The config file, its schema and its precedence rules belong to
+[`cli`](https://github.com/schemaport/cli), in `src/config.ts`. No provider
+package reads it.
+
+## Next
+
+- [Commands](/commands/check) — every flag the config file can supply a default for
+- [Exit codes](/reference/exit-codes) — why a bad config is `2`
+- [Use SchemaPort in CI](/guides/ci)

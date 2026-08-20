@@ -1,0 +1,302 @@
+---
+title: Anthropic
+navTitle: Anthropic
+description: Anthropic accepts your whole schema and enforces none of it. SchemaPort drops nothing and reports the non-enforcement instead.
+keywords:
+  - anthropic
+  - claude
+  - messages api
+  - tool use
+  - strict mode
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+Anthropic is the most permissive of the four targets and the most easily
+misread. The Messages API takes any JSON Schema you give it, so nothing has to
+be dropped — but in the default configuration it validates nothing either.
+SchemaPort compiles the whole schema through untouched and reports the
+non-enforcement as warnings. Behaviour on this page is owned by
+[`provider-anthropic`](https://github.com/schemaport/provider-anthropic);
+`rulesReviewedAt` is **2026-08-20**.
+
+## The API surface
+
+The target is the Messages API `tools[]` entry: `name`, optional `description`,
+and `input_schema`. SchemaPort emits the **default, non-strict** form.
+
+`input_schema` is typed by `@anthropic-ai/sdk` 0.119.0 as an open object —
+`{ type: 'object'; properties?; required?; [k: string]: unknown }` — and the
+Define tools page shows the schema being rendered into the constructed tool-use
+system prompt verbatim. There is no keyword the default request path rejects,
+which is why this adapter drops nothing.
+
+### Why SchemaPort does not emit `strict: true`
+
+Setting `strict: true` is the only way Anthropic enforces the schema; it
+constrains sampling to schema-valid output. SchemaPort deliberately does not
+emit it.
+
+The strict subset **rejects with a 400** every keyword in the
+`anthropic/constraint-not-enforced` list: `minimum`, `maximum`, `multipleOf`,
+`minLength`, `maxLength`, array constraints beyond `minItems` of 0 or 1, and
+`additionalProperties` set to anything other than `false`. Emitting strict would
+therefore mean dropping those keywords, which is lossy under SchemaPort's rules
+— and would make the `refund_order` example, whose `amount` carries
+`minimum: 0`, refuse to compile without `--allow-lossy`.
+
+<Note>
+The trade is explicit rather than hidden. SchemaPort compiles the permissive
+form that carries your whole schema, and reports in `check` that none of it is
+enforced. If you want enforcement for a specific tool, take the compiled output,
+remove the keywords the strict subset rejects, add `additionalProperties: false`
+to every object, and add `strict: true` yourself — knowing exactly which
+constraints you gave up. There is no option on this adapter to do that for you.
+</Note>
+
+## Compiled output
+
+```console
+$ schemaport compile ./examples/refund-order/v1/refund-order.json --targets anthropic --out /tmp/prov-anthropic
+Tool: refund_order
+
+Anthropic
+✓ /tmp/prov-anthropic/anthropic/refund-order.json
+  • [safe] renamed-input-schema-field at inputSchema
+    Emitted the canonical `inputSchema` as the Messages API field `input_schema`.
+⚠ Anthropic accepts this schema in full but does not validate tool inputs against it by default. The schema is rendered into the tool-use system prompt as guidance, so Claude may return mistyped values or omit required properties. Input validation requires `strict: true`, which SchemaPort does not emit because the strict subset rejects several keywords in this schema family.
+  Path: inputSchema
+⚠ `minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented "Not supported" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee.
+  Path: inputSchema.properties.amount.minimum
+
+Result: 1 file written to /tmp/prov-anthropic, 0 refusals
+```
+
+The file it wrote:
+
+```json
+{
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "orderId": {
+        "type": "string",
+        "description": "The order to refund"
+      },
+      "amount": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Amount to refund. Omit to refund the full order."
+      },
+      "refundMethod": {
+        "type": "string",
+        "description": "How to return the funds",
+        "enum": ["original_payment", "store_credit", "bank_transfer"]
+      }
+    },
+    "required": ["orderId"]
+  }
+}
+```
+
+Compare that with the [OpenAI output](/providers/openai#compiled-output) for the
+same tool. Nothing changed here: `minimum: 0` is intact, `amount` is still
+optional, the object is still open. One field was renamed, and that is the whole
+transformation list. Key order is fixed at `name`, `description`, `input_schema`
+so repeated compilation is byte-identical.
+
+## Accepted is not enforced
+
+This is the single most important thing about the Anthropic target, and the
+reason a compatible tool still reports warnings.
+
+Anthropic states it directly on the Strict tool use page: without strict mode,
+Claude might return incompatible types — `"2"` instead of `2` — or omit required
+fields. For a tool compiled by this adapter:
+
+| | Sent to Anthropic | Enforced by Anthropic |
+| --- | --- | --- |
+| `type` | yes | no |
+| `required` | yes | no |
+| `enum`, `const` | yes | no |
+| `minimum`, `maxLength`, `pattern`, … | yes | no |
+
+`check` reports this as `anthropic/schema-not-enforced` on every tool whose root
+schema declares at least one property or required property. A genuinely
+unconstrained tool still reports clean. This is a warning, not a clean pass.
+
+## Compatibility rules
+
+Ten codes, all prefixed `anthropic/`.
+
+| Code | Severity | Compile | Fires when |
+| --- | --- | --- | --- |
+| `anthropic/invalid-tool-name` | error | refuses | The name is outside `^[a-zA-Z0-9_-]{1,64}$`. Renaming a tool would change the identity your code dispatches on. |
+| `anthropic/input-schema-not-object` | error | refuses | The root schema declares a non-object type. |
+| `anthropic/missing-input-schema-type` | error | fixes | The root schema declares no `type`. Compile adds `"type": "object"`. |
+| `anthropic/schema-not-enforced` | warning | fixes | The root schema constrains something. The headline warning above. |
+| `anthropic/constraint-not-enforced` | warning | fixes | A keyword on Anthropic's documented "Not supported" list is present. |
+| `anthropic/keyword-not-documented` | warning | fixes | A keyword absent from both the supported and unsupported lists is present. |
+| `anthropic/undocumented-string-format` | warning | fixes | `format` is outside Anthropic's ten documented values. |
+| `anthropic/enum-non-primitive-value` | warning | fixes | `enum` contains a non-primitive value; Anthropic documents strings, numbers, booleans and nulls only. |
+| `anthropic/external-ref` | warning | fixes | A `$ref` targets another document. Nothing resolves it in default tool use. |
+| `anthropic/missing-tool-description` | info | fixes | The tool has no description, which Anthropic calls the most important factor in tool performance. |
+
+Only two conditions produce `ok: false`, and neither is about lossiness:
+`anthropic/invalid-tool-name` and `anthropic/input-schema-not-object`.
+
+### Which keywords land in which warning
+
+<AccordionGroup>
+  <Accordion title="anthropic/constraint-not-enforced — never enforced">
+    `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`,
+    `minLength`, `maxLength`, `maxItems`, `uniqueItems`.
+
+    Two more fire the same code conditionally: `minItems` with a value other
+    than `0` or `1` (Anthropic documents support for those two only), and
+    `additionalProperties` set to anything other than `false`.
+
+    These are ignored in default tool use *and* on the documented "Not
+    supported" list for `strict: true`, which returns a 400 rather than
+    enforcing them. They are preserved in the compiled schema, but treat them as
+    documentation for the model.
+  </Accordion>
+  <Accordion title="anthropic/keyword-not-documented — genuinely uncertain">
+    `pattern`, `oneOf`, `not`, `prefixItems`, `minProperties`, `maxProperties`.
+
+    These appear in neither Anthropic's supported nor its unsupported list.
+    Absence is not a documented rejection, so the diagnostic says "not
+    documented as supported" rather than asserting behaviour in either
+    direction.
+
+    `pattern` is the interesting one. The strict tool use data-retention note
+    warns against putting PHI in "`pattern` regular expressions", which implies
+    it is compiled into the grammar under strict mode — but that is an
+    inference, not a support statement, so it is reported as uncertain.
+  </Accordion>
+  <Accordion title="No diagnostic at all">
+    `allOf`, `if`/`then`/`else`, `contains`, `patternProperties`,
+    `propertyNames`, `dependentRequired`, `const`, `title`, `default`, and union
+    `type` arrays such as `["string", "null"]`.
+
+    Union type arrays are also absent from both lists. Anthropic's `enum`
+    support explicitly includes nulls and `anyOf` is documented as supported, so
+    a type array is not obviously outside the subset — but neither is it
+    documented as inside it. No rule is emitted rather than guessing. The
+    tool-level `anthropic/schema-not-enforced` warning still covers them.
+  </Accordion>
+</AccordionGroup>
+
+## Transformations
+
+Two, both safe. **This provider emits no lossy transformation at all.**
+
+| Code | Path | When |
+| --- | --- | --- |
+| `renamed-input-schema-field` | `inputSchema` | Always. The canonical `inputSchema` is emitted as the Messages API field `input_schema`. |
+| `added-input-schema-type` | `inputSchema.type` | Only when the canonical root schema declares no `type`. Adds `"type": "object"`, which the API requires. |
+
+Because nothing is ever lossy, `--allow-lossy` has no effect on this target:
+`compile(tool)` and `compile(tool, { allowLossy: true })` produce byte-identical
+results, and the test suite asserts that for every shared fixture.
+
+## Probing
+
+<Note>
+**No live Anthropic API call has ever been run for this project.** No API keys
+exist in this environment. `probe` is fully implemented and tested against
+mocked SDK clients only. Everything below describes what it does when you run it
+with your own key.
+</Note>
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+schemaport probe ./tools/refund_order.json --targets anthropic
+```
+
+| Setting | Value |
+| --- | --- |
+| API key environment variable | `ANTHROPIC_API_KEY` |
+| Model environment variable | `SCHEMAPORT_ANTHROPIC_MODEL` |
+| Default model | `claude-haiku-4-5` |
+| Resolution order | `options.model` → `SCHEMAPORT_ANTHROPIC_MODEL` → default |
+
+Override per run with `--model`, or for a shell session:
+
+```bash
+export SCHEMAPORT_ANTHROPIC_MODEL=claude-sonnet-5
+schemaport probe ./tools/refund_order.json --targets anthropic
+```
+
+The default comes from the official Models overview "Latest models comparison"
+table: Claude Haiku 4.5 is the cheapest currently available model at $1 / $5 per
+MTok and it supports tool use. `claude-haiku-4-5` is the documented alias for
+`claude-haiku-4-5-20251001`.
+
+One Messages API request is sent — `max_tokens: 1024`, one user turn asking for
+a placeholder call, the compiled tool, and `tool_choice` pinned to it. Your
+function is never executed and no real data is sent.
+
+Returned arguments are validated against the **canonical** schema, not the
+compiled one. That is what makes Anthropic's lack of default enforcement
+observable rather than theoretical: `status: 'accepted'` with
+`argumentsValid: false` means the API took the schema and the model ignored part
+of it. Two responses are accepted with no arguments inspected — a
+`stop_reason` of `max_tokens`, because a truncated tool input would look
+identical to a genuine violation, and `refusal`, because the model declined but
+the schema was still accepted.
+
+## Known limitations
+
+<AccordionGroup>
+  <Accordion title="A rejected verdict deserves a second look">
+    The probe pins `tool_choice` so a call is always produced. Core's
+    `classifyProviderError` maps any 400/422 that does not mention a missing
+    model to `rejected` — so a 400 caused by the *forced tool choice* rather
+    than the schema, for example a model that does not support forced tool use,
+    would be reported as a schema rejection. Cross-check a `rejected` verdict's
+    `providerError.message` before acting on it.
+  </Accordion>
+  <Accordion title="One probe is not evidence about enforcement">
+    The probe answers "was this tool definition accepted?", not "does the model
+    respect the schema?" One sampled call proves nothing either way. Argument
+    validation also uses core's `validateValue`, which does not resolve `$ref`
+    and does not check `format`.
+  </Accordion>
+  <Accordion title="Rules deliberately not implemented">
+    No recursive-schema rule: recursive schemas are documented as unsupported
+    under strict mode only, which this adapter does not emit. No description or
+    schema size limits, and no maximum tool count: none is documented on the
+    Messages API reference or the Tool reference, and inventing one would be a
+    fabricated rule. No per-model differences: the default tool-use path is
+    available across current models. Local `$ref`/`$defs` are documented as
+    supported and pass through untouched.
+  </Accordion>
+  <Accordion title="Fields compile cannot emit">
+    `input_examples`, `cache_control`, `defer_loading` and `allowed_callers` are
+    optional tool-definition properties outside SchemaPort's canonical format,
+    so they are never emitted. Add them to the compiled object yourself if you
+    need them.
+  </Accordion>
+</AccordionGroup>
+
+## Sources
+
+Rules were derived from these official pages plus `@anthropic-ai/sdk` 0.119.0
+(`resources/messages/messages.d.ts`). They are also exported as
+`anthropicProvider.docs`.
+
+| Title | URL |
+| --- | --- |
+| Define tools | https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools |
+| Strict tool use | https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use |
+| Structured outputs — JSON Schema limitations | https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations |
+| Tool reference — tool definition properties | https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference |
+| Messages API reference | https://platform.claude.com/docs/en/api/messages |
+| Models overview | https://platform.claude.com/docs/en/about-claude/models/overview |
+
+Next: see how this column compares in the
+[compatibility matrix](/providers/compatibility-matrix), or run
+[`check`](/commands/check) over your own tools.

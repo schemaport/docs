@@ -160,12 +160,13 @@ const brandPresets: Record<BrandPresetKey, BrandConfig> = {
 const brandPreset: BrandPresetKey = 'primary'
 
 export const siteConfig: SiteConfig = {
-  name: 'Schemaport Docs',
+  name: 'SchemaPort',
   description:
-    'Documentation for Schemaport Docs.',
-  repoUrl: '',
+    'Define an AI tool schema once, then safely use it across OpenAI, Anthropic, Gemini and MCP. A local-first CLI that checks compatibility, compiles provider-safe schemas, probes real APIs and detects breaking changes.',
+  repoUrl: 'https://github.com/schemaport',
   links: [
-    { label: 'Get started', href: '/quickstart' },
+    { label: 'Quickstart', href: '/quickstart' },
+    { label: 'Providers', href: '/providers/compatibility-matrix' },
     { label: 'Changelog', href: '/changelog' },
   ],
   brand: brandPresets[brandPreset],

@@ -1,45 +1,110 @@
 ---
-title: Introduction
-description: Give readers a clear path from their first question to a result they can verify.
+title: SchemaPort
+navTitle: Introduction
+description: Define an AI tool schema once, then safely use it across OpenAI, Anthropic, Gemini and MCP.
 mode: home
+keywords:
+  - schemaport
+  - tool schema
+  - openai
+  - anthropic
+  - gemini
+  - mcp
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
 ---
 
 <Hero
-  title="Build documentation around the reader"
-  subtitle="Start with a useful first result, organize what follows, and publish every format from one reviewable source."
-  primaryLabel="Get started"
+  title="Define an AI tool schema once. Use it safely everywhere."
+  subtitle="SchemaPort takes one canonical tool definition and tells you exactly what OpenAI, Anthropic, Gemini and MCP will each do with it — then compiles it for all four without ever weakening it behind your back."
+  primaryLabel="Quickstart"
   primaryHref="/quickstart"
-  secondaryLabel="Publish your docs"
-  secondaryHref="/guides/create-a-site"
+  secondaryLabel="Why this is hard"
+  secondaryHref="/portability-problem"
 />
 
-## Build the reader journey
+## One schema, four honest answers
 
-Begin with the task that brings most readers to your documentation, then make
-the next useful step obvious.
+A tool schema that works on one provider does not reliably work on another. The
+same JSON is accepted by Anthropic, rejected by OpenAI's strict mode, and
+accepted by Gemini only after a validation keyword stops binding anything.
 
-<CardGroup cols="2">
-  <Card title="Write your quickstart" icon="party-horn" href="/quickstart">
-    Turn prerequisites, setup, one realistic task, and verification into a short path.
+SchemaPort is a local-first CLI. You keep one **canonical tool** — a `name`, an
+optional `description`, and an `inputSchema` that is plain JSON Schema — and
+SchemaPort answers four questions about it. Nothing but `probe` touches the
+network, and everything else runs without an API key.
+
+## The four capabilities
+
+<CardGroup cols={2}>
+  <Card title="check" icon="book-open" href="/commands/check">
+    Runs each provider's compatibility rules against your canonical schema and
+    reports what is wrong, where, and whether `compile` can work around it.
+    Static, local, no credentials.
   </Card>
-  <Card title="Organize your navigation" icon="grid-round" href="/customization">
-    Group related tasks and references around how people use your product.
+  <Card title="compile" icon="wrench" href="/commands/compile">
+    Writes the provider-native tool definition for each target, applying the
+    minimum transformations required and recording every one of them in a
+    manifest. It refuses rather than silently weakening your schema.
   </Card>
-  <Card title="Document your API" icon="code-simple" href="/api">
-    Replace `openapi.yaml` to publish browsable endpoint docs with a live playground.
+  <Card title="probe" icon="link-simple" href="/commands/probe">
+    The only capability that touches the network: it sends the compiled
+    definition to the real API and reports whether the provider accepts it
+    today. Probe is fully implemented and tested against mocked clients — no
+    live provider call has been made in preparing this documentation.
   </Card>
-  <Card title="Learn the Thally workflow" icon="wrench" href="/guides/create-a-site">
-    Create, publish, and update sites from the Cloud dashboard, the CLI, or your AI tools.
+  <Card title="diff" icon="code-simple" href="/commands/diff">
+    Compares two versions of your canonical schemas and classifies every change
+    as breaking, non-breaking or informational. This is the CI gate that stops a
+    new required property shipping unnoticed.
   </Card>
 </CardGroup>
 
-## Publish from one source
+## The rule underneath all of it
 
-Thally turns the same reviewed content into HTML, search, agent discovery files,
-Markdown mirrors, and a read-only MCP surface — so people and AI tools read the
-same, current answer. Add only the locales your readers need.
+SchemaPort never weakens your schema silently. A provider that accepts your
+schema *after quietly dropping `minimum`* has not given you a working tool — it
+has given you a tool that will eventually be called with a negative refund
+amount.
 
-<Note type="info" title="Start with the product, not the template">
-  Replace this page with the questions, terminology, and workflows your readers
-  already use. Keep `docs.json` focused on the path between those tasks.
+So every change compilation makes is recorded and classified. A change that
+preserves your contract compiles. A change that destroys a constraint is
+**refused** until you explicitly accept it with `--allow-lossy`. And a change
+that alters runtime behaviour always produces a warning, even when nothing was
+lost. See [Safe and lossy compilation](/concepts/safe-and-lossy-compilation).
+
+<Note>
+The packages are not published to npm yet. The install path that works today is
+a local workspace build — see [Installation](/installation).
 </Note>
+
+## Start here
+
+<CardGroup cols={3}>
+  <Card title="The portability problem" href="/portability-problem">
+    One `refund_order` schema, four different verdicts. Start here if you want
+    to know why this product exists.
+  </Card>
+  <Card title="Installation" href="/installation">
+    Node 20 or newer, plus the local workspace build that works today.
+  </Card>
+  <Card title="Quickstart" href="/quickstart">
+    Point at a schema, run `check`, read the result, run `compile`, look at what
+    came out. About five minutes.
+  </Card>
+</CardGroup>
+
+## How the product is assembled
+
+SchemaPort ships as six independent repositories. Provider rules live in
+provider packages so they can be updated and released as providers change,
+without touching the core or the CLI.
+
+| Repository | Owns |
+|---|---|
+| [`core`](https://github.com/schemaport/core) | Canonical format, loading, diagnostics, compile policy, diff |
+| [`cli`](https://github.com/schemaport/cli) | Commands, flags, output formats, exit codes, configuration |
+| [`provider-openai`](https://github.com/schemaport/provider-openai) | OpenAI rules, transformations, probing |
+| [`provider-anthropic`](https://github.com/schemaport/provider-anthropic) | Anthropic rules, transformations, probing |
+| [`provider-gemini`](https://github.com/schemaport/provider-gemini) | Gemini rules, transformations, probing |
+| [`provider-mcp`](https://github.com/schemaport/provider-mcp) | MCP rules, compilation, local validation |

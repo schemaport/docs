@@ -1,0 +1,247 @@
+---
+title: Manifest
+navTitle: Manifest
+description: The manifest.json that compile writes — every field, a real example, and why it is deterministic enough to commit and review in a pull request.
+keywords:
+  - manifest.json
+  - compile
+  - transformations
+  - determinism
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+Every [`compile`](/commands/compile) run writes `<out>/manifest.json` alongside
+the generated tool definitions. It records what was written, for which targets,
+from which source file, and — the part that matters — every transformation
+SchemaPort applied to get there.
+
+Commit it. The manifest turns "the OpenAI payload changed" into a reviewable line
+in a pull request.
+
+## Shape
+
+```ts
+interface Manifest {
+  schemaPortVersion: string;
+  targets: string[];                 // every selected target id, sorted
+  tools: ManifestTool[];             // sorted by tool name
+}
+
+interface ManifestTool {
+  name: string;
+  source: string;                    // relative to the working directory
+  targets: Record<string, ManifestTargetEntry>;
+}
+
+interface ManifestTargetEntry {
+  output: string;                    // relative to the output directory
+  transformations: Transformation[];
+  warnings: ManifestWarning[];
+}
+
+interface Transformation {
+  code: string;
+  path: string;
+  detail: string;
+  lossy: boolean;
+}
+
+interface ManifestWarning {
+  code: string;
+  path: string;
+  message: string;
+}
+```
+
+### Fields
+
+| Field | Meaning |
+|---|---|
+| `schemaPortVersion` | The `@schemaport/core` version that produced the file. |
+| `targets` | Every target the run selected, sorted alphabetically — including targets for which nothing compiled. |
+| `tools` | One entry per tool that compiled for **at least one** target, sorted by name. |
+| `tools[].name` | The canonical tool name, unchanged. |
+| `tools[].source` | The path the canonical tool was read from, relative to the working directory, with forward slashes. |
+| `tools[].targets` | Keyed by target id, inserted in alphabetical order. Only targets that actually produced a file appear. |
+| `…targets[].output` | The generated file's path relative to the output directory, for example `openai/refund-order.json`. |
+| `…targets[].transformations` | Every change compilation made, each with a stable `code`, the canonical schema `path`, a human `detail`, and `lossy`. |
+| `…targets[].warnings` | The `warning` and `info` diagnostics that survived compilation, projected to `code`, `path` and `message`. `error` diagnostics are not included. |
+
+<Note>
+A refused tool/target pair is absent from the manifest entirely — no entry, no
+placeholder. A tool refused by *every* selected target does not appear at all,
+and a run where nothing compiled still writes a manifest whose `tools` is `[]`.
+An empty manifest is a real result, and in a pull request it is a very loud one.
+</Note>
+
+## A real manifest
+
+Compiling the refund-order example for all four targets. Trimmed for length: the
+`search_orders` entry, the `gemini` block, and some individual transformations
+and warnings. Nothing else is changed.
+
+```json
+{
+  "schemaPortVersion": "0.1.0",
+  "targets": [
+    "anthropic",
+    "gemini",
+    "mcp",
+    "openai"
+  ],
+  "tools": [
+    {
+      "name": "refund_order",
+      "source": "tools/refund-order.json",
+      "targets": {
+        "anthropic": {
+          "output": "anthropic/refund-order.json",
+          "transformations": [
+            {
+              "code": "renamed-input-schema-field",
+              "path": "inputSchema",
+              "detail": "Emitted the canonical `inputSchema` as the Messages API field `input_schema`.",
+              "lossy": false
+            }
+          ],
+          "warnings": [
+            {
+              "code": "anthropic/constraint-not-enforced",
+              "path": "inputSchema.properties.amount.minimum",
+              "message": "`minimum` is never enforced by Anthropic. It is ignored in default tool use, and it is on the documented \"Not supported\" list for `strict: true`, which returns a 400 rather than enforcing it. The keyword is preserved in the compiled schema, but treat it as documentation for the model, not a guarantee."
+            }
+          ]
+        },
+        "mcp": {
+          "output": "mcp/refund-order.json",
+          "transformations": [],
+          "warnings": []
+        },
+        "openai": {
+          "output": "openai/refund-order.json",
+          "transformations": [
+            {
+              "code": "renamed-input-schema-to-parameters",
+              "path": "inputSchema",
+              "detail": "Emitted `inputSchema` as the OpenAI `parameters` field.",
+              "lossy": false
+            },
+            {
+              "code": "enabled-strict-mode",
+              "path": "inputSchema",
+              "detail": "Emitted `strict: true` so OpenAI enforces the schema instead of best-effort matching.",
+              "lossy": false
+            },
+            {
+              "code": "converted-optional-property-to-nullable",
+              "path": "inputSchema.properties.amount",
+              "detail": "Made `amount` required and added `\"null\"` to its type; strict mode has no optional properties.",
+              "lossy": false
+            },
+            {
+              "code": "added-additional-properties-false",
+              "path": "inputSchema.additionalProperties",
+              "detail": "Added `additionalProperties: false`, which strict mode requires on every object.",
+              "lossy": false
+            }
+          ],
+          "warnings": [
+            {
+              "code": "openai/nullable-instead-of-omitted",
+              "path": "inputSchema.properties.amount",
+              "message": "After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as \"not supplied\" in the handler for `refund_order`."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
+```
+
+MCP's entry with empty `transformations` and `warnings` is the interesting one:
+the canonical format *is* the MCP shape, so there was nothing to change and
+nothing to warn you about.
+
+## Why it is deterministic
+
+Compiling the same input twice produces byte-identical output, manifest included:
+
+```console
+$ schemaport compile tools --out generated > /dev/null
+$ schemaport compile tools --out generated2 > /dev/null
+$ diff -r generated generated2 && echo "no differences"
+no differences
+```
+
+(The reports are sent to `/dev/null` so only the comparison is visible; the
+files are written either way.)
+
+That is not an accident of the serializer. It comes from deterministic
+*construction*:
+
+- **No timestamps.** Nothing derived from the clock goes into the file.
+- **Nothing derived from file-system ordering.** Directory entries are sorted
+  before they are read, and tools are sorted by name after loading.
+- **`targets` is sorted** alphabetically.
+- **`tools` is sorted** by name.
+- **Per-tool target keys are inserted in alphabetical order**, so they serialize
+  in that order.
+- **Field order is fixed** by how the object is built, not by how JSON.stringify
+  happened to see it.
+- **String comparison does not use the machine's locale**, so the same inputs
+  cannot sort differently on a different machine.
+- **Formatting is fixed**: two-space indentation and a trailing newline.
+
+<Note>
+Determinism means "the same input always produces the same bytes", not "the
+output is re-sorted for you". Object keys are written in insertion order, so a
+compiled tool file preserves your canonical schema's own property order. Reorder
+the properties in your source file and the compiled files change too — which is
+correct, and shows up in the diff.
+</Note>
+
+<Warning>
+`source` is relative to the **working directory** at compile time, and a source
+outside that directory is recorded as an absolute path. Compile from the same
+directory every time — your repository root — or the manifest will churn between
+your machine and CI for reasons that have nothing to do with your schemas.
+</Warning>
+
+## Reviewing it in a pull request
+
+Because it is deterministic, `manifest.json` is a genuine review artefact rather
+than build noise:
+
+- A new `[lossy]` transformation — `"lossy": true` — appearing in a diff is
+  someone accepting a weaker schema. That is exactly the change you want a human
+  to see.
+- A target entry disappearing means a compilation started being refused.
+- A new `warnings` entry means a provider rule changed, usually after a provider
+  package bump. That is a finding about the provider, not a regression in your
+  code.
+- The whole file vanishing into `"tools": []` means nothing compiled at all.
+
+The matching CI gate is a staleness check:
+
+```sh
+schemaport compile tools --out generated
+git diff --exit-code generated
+```
+
+Compilation is deterministic, so any diff there is a real change. See
+[Use SchemaPort in CI](/guides/ci).
+
+## Ownership
+
+The manifest shape, the file layout and the determinism guarantees belong to
+[`cli`](https://github.com/schemaport/cli). Transformation codes and details
+belong to the provider package that produced them; the warning codes are
+[diagnostics](/reference/diagnostics) from the same packages.
+
+## Next
+
+- [Compile](/commands/compile) — the command that writes it
+- [Safe and lossy compilation](/concepts/safe-and-lossy-compilation) — what `lossy: true` costs you
+- [Diagnostics](/reference/diagnostics) — the codes in `warnings`

@@ -1,0 +1,336 @@
+---
+title: Run SchemaPort in CI
+navTitle: Continuous integration
+description: Gate pull requests on provider incompatibilities and breaking schema changes, without an API key.
+keywords:
+  - ci
+  - github actions
+  - fail-on
+  - exit codes
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+A pull request that changes a tool schema should fail before it merges if the
+schema no longer compiles for a provider you ship to, or if it breaks callers
+who were written against the previous version. `check` and `diff` answer both
+questions locally, with no API key and no network access, so they belong on
+every pull request.
+
+`probe` does not. It spends money and needs provider secrets — run it on a
+schedule instead.
+
+## Before you start
+
+<Warning>
+  SchemaPort 0.1.0 is **not published to npm yet**. The `npm ci` and
+  `npx schemaport` steps below are the shape the workflow takes once the
+  packages are released; they will not resolve today. Until then, build the CLI
+  from the source repositories and invoke `node dist/cli.js` wherever the
+  workflow says `npx schemaport`. See [Installation](/installation) for the
+  current path.
+</Warning>
+
+Everything else on this page — the commands, the flags, the exit codes and the
+output — is the real behaviour of 0.1.0.
+
+## What gates a pull request
+
+Three checks, in order of how often they catch something:
+
+| Step | Command | Fails the build on |
+|---|---|---|
+| Compatibility | `schemaport check` | exit `1` — a diagnostic at or above `--fail-on` |
+| Staleness | `schemaport compile` + `git diff --exit-code` | committed output no longer matches the canonical tools |
+| Breaking changes | `schemaport diff` | exit `1` — a breaking change against the base branch |
+
+Exit code `1` always means "the command ran and this is what it found". Exit
+code `2` means the command could not run at all — an unknown flag, a path that
+does not exist, malformed canonical JSON. Keeping those separate is what makes a
+green build mean "no findings" rather than "the command was misspelled". The
+full table is on [Exit codes](/reference/exit-codes).
+
+## A working GitHub Actions workflow
+
+```yaml
+name: tools
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  schemas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Fail the build on any provider incompatibility.
+      - name: Check tool schemas
+        run: npx schemaport check tools/ --fail-on error
+
+      # Compile, then fail if the committed output is stale. Compilation is
+      # deterministic, so any diff here is a real change.
+      - name: Compile tool schemas
+        run: |
+          npx schemaport compile tools/ --out generated/
+          git diff --exit-code generated/
+
+      # Compare this branch's tools against the base branch.
+      - name: Diff against the base branch
+        if: github.event_name == 'pull_request'
+        run: |
+          git worktree add ../base ${{ github.event.pull_request.base.sha }}
+          npx schemaport diff ../base/tools tools --fail-on breaking
+```
+
+`fetch-depth: 0` matters: the diff step needs the base commit in the local
+clone. `NO_COLOR` is unnecessary — colour is emitted only when stdout is a TTY,
+so CI logs are plain text automatically.
+
+Success looks like three green steps and nothing in the log but `Result:` lines.
+
+<Note>
+  `check`, `compile` and `diff` never contact a provider API, so this job needs
+  no secrets and works on a fork pull request.
+</Note>
+
+## Tuning strictness with `--fail-on`
+
+`check` defaults to `--fail-on error`, which is the right gate for most
+projects: every error is something a provider will reject as written.
+
+| `--fail-on` | Exits `1` when |
+|---|---|
+| `error` (default) | any `error` diagnostic exists |
+| `warning` | any `error` or `warning` diagnostic exists |
+| `never` | never — always exits `0` |
+
+`info` diagnostics never affect the exit code.
+
+Raising the bar to `--fail-on warning` is stricter than it sounds. Warnings are
+where SchemaPort records things that are true but unavoidable — that Anthropic
+does not enforce your schema at all by default, that Gemini's default
+`AUTO` function-calling mode treats `minimum` as guidance, that OpenAI strict
+mode will send `null` where the property used to be absent. Those warnings will
+not go away by editing your schema, so `--fail-on warning` mostly produces a
+permanently red build. Use it as a one-off audit, or on a tool set you have
+deliberately kept inside every provider's common subset.
+
+`--fail-on never` is for reporting steps that must stay green — see
+[Machine-readable output](#machine-readable-output).
+
+Here is `check` failing, on the example tool set shipped with the CLI:
+
+```console
+$ schemaport check examples/refund-order/v1 --targets openai,anthropic,gemini,mcp
+Tool: refund_order
+
+OpenAI
+✗ OpenAI strict mode requires `additionalProperties: false` on every object schema.
+  Path: inputSchema.additionalProperties
+  SchemaPort can compile this: Adds `additionalProperties: false`.
+  Docs: https://developers.openai.com/api/docs/guides/structured-outputs
+✗ Optional property `amount` is not allowed in OpenAI strict mode; every property must be listed in `required`.
+  Path: inputSchema.properties.amount
+  SchemaPort can compile this: Emits `amount` as required and nullable.
+  Docs: https://developers.openai.com/api/docs/guides/function-calling
+
+…
+
+MCP
+✓ Compatible
+
+Result: 10 errors, 14 warnings
+$ echo $?
+1
+```
+
+Every finding names the schema path and says whether `compile` can work around
+it. That last part is why `check` failing is not necessarily a reason to change
+your schema — see [Safe and lossy
+compilation](/concepts/safe-and-lossy-compilation).
+
+## Diff is the breaking-change gate
+
+`check` tells you whether a provider will accept your schema. It says nothing
+about the callers you already have in production. `diff` is the only command
+that answers that, by comparing the tool set on this branch against the tool set
+on the base branch:
+
+```console
+$ schemaport diff examples/refund-order/v1 examples/refund-order/v2
+Tool: refund_order
+
+BREAKING
+- Required property `currency` was added. Existing callers do not send it.
+  Path: inputSchema.properties.currency
+- Enum value `"store_credit"` removed.
+  Path: inputSchema.properties.refundMethod.enum
+
+NON-BREAKING
+- Optional property `reason` was added.
+  Path: inputSchema.properties.reason
+
+INFORMATIONAL
+- The description changed.
+  Path: inputSchema.properties.orderId.description
+
+Result: 2 breaking, 1 non-breaking, 1 informational
+$ echo $?
+1
+```
+
+`--fail-on breaking` is the default; `--fail-on any` also fails on the optional
+property, and `--fail-on never` only reports. Unchanged tools are not printed at
+all.
+
+Diffing against the previous version, rather than against a stored baseline
+file, means the gate needs no state of its own: the base branch already is the
+contract your callers were written against. When a breaking change is
+intentional, the pull request that makes it is exactly where the conversation
+about versioning belongs.
+
+The classification rules — and the deliberate decision to report anything
+unclassifiable as breaking rather than risk a false "safe" — are described on
+[Breaking changes](/concepts/breaking-changes).
+
+## Machine-readable output
+
+`--format json` prints exactly one JSON document to stdout and nothing else, so
+a step can post a summary without scraping text:
+
+```yaml
+      - name: Summarise findings
+        run: |
+          npx schemaport check tools/ --format json --fail-on never > check.json
+          jq -r '"\(.summary.errors) errors, \(.summary.warnings) warnings"' check.json >> "$GITHUB_STEP_SUMMARY"
+```
+
+`--fail-on never` keeps this step green so the summary is always produced. Run
+the real gate as its own step; a reporting step that can fail is a reporting
+step you will eventually disable.
+
+The run-level `summary` counts `tools`, `errors`, `warnings` and `infos`. Note
+that per-target summaries use the singular keys `error`, `warning` and `info` —
+the two shapes are different on purpose. Every document also carries `command`
+and `schemaPortVersion`, so an archived report identifies the version that
+produced it.
+
+## Why probe does not belong on every pull request
+
+`probe` sends the compiled tool definition to the provider's API and reports
+whether it was accepted. That makes it the only command that can catch a
+provider changing its schema validation without announcing it — and also the
+only command that costs money and needs secrets.
+
+Three reasons to keep it off the pull-request path:
+
+- **It bills you.** One request per tool per target, on every run. The defaults
+  are cheap models with a small output cap — `gpt-5.6-luna` and
+  `claude-haiku-4-5` at 1024 output tokens, `gemini-2.5-flash-lite` at 512 —
+  but a busy repository multiplies that quickly.
+- **It needs secrets.** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and
+  `GEMINI_API_KEY` (with `GOOGLE_API_KEY` as a fallback for Gemini). Secrets are
+  not available to workflows triggered by fork pull requests, so the step would
+  fail for exactly the contributors you least want to block.
+- **It answers a question that does not change per commit.** Provider
+  validation drifts on the provider's schedule, not yours. A daily run catches
+  that; a per-commit run just re-asks.
+
+<Note>
+  SchemaPort's own test suite exercises `probe` against mocked SDK clients and
+  makes no network requests. What a provider does with *your* schema is
+  something only a run with your own key can tell you.
+</Note>
+
+### Running probe on a schedule
+
+Store the keys as repository secrets, then branch on the exit code:
+
+```yaml
+  probe:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+
+      - name: Probe the provider APIs
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          npx schemaport probe tools/ || code=$?
+          # 1 = a provider rejected a schema: fail.
+          # 3 = we never got a verdict (missing key, network, model): warn only.
+          if [ "${code:-0}" = "3" ]; then
+            echo "::warning::schemaport probe could not reach a verdict"
+            exit 0
+          fi
+          exit "${code:-0}"
+```
+
+Add the trigger to the workflow's `on:` block:
+
+```yaml
+on:
+  schedule:
+    - cron: '17 6 * * *'
+```
+
+**Never treat exit `3` as a schema failure.** It means the probe could not ask,
+not that the provider said no — a missing key, an authentication failure, a
+stale model id, a rate limit, or a network problem. This is what a missing key
+actually looks like:
+
+```console
+$ schemaport probe examples/refund-order/v1/refund-order.json --targets openai
+Tool: refund_order
+
+OpenAI
+⚠ ERROR — missing-credentials (not a schema rejection)
+  No API key found. Set OPENAI_API_KEY to probe this provider.
+  Set the API key:  export OPENAI_API_KEY=<your key>
+  Then re-run:      schemaport probe examples/refund-order/v1/refund-order.json --targets openai
+
+Result: 0 accepted, 0 rejected, 1 error, 0 skipped
+$ echo $?
+3
+```
+
+Exit `1` — a genuine rejection — is the outcome worth paging on. `mcp` is
+skipped rather than probed: it is a protocol with no hosted API to ask, so
+`probe` defaults to `openai,anthropic,gemini`.
+
+## Pinning
+
+Pin `schemaport` in `package.json` and let Dependabot bump it. Provider
+compatibility rules ship inside the four provider packages, so a bump can
+legitimately turn a green check red. That is a finding about a provider, not a
+regression in your code — and finding it in CI is the entire point.
+
+## Next
+
+- [`check`](/commands/check) — every flag, and how diagnostics are grouped.
+- [`diff`](/commands/diff) — the full change classification.
+- [Exit codes](/reference/exit-codes) — the authoritative table.
+- [Use generated schemas from TypeScript](/guides/typescript) — what to do with
+  the output the compile step produced.
+
+Commands, flags, output formats and exit codes are owned by
+[`cli`](https://github.com/schemaport/cli); the diff engine and compile policy
+by [`core`](https://github.com/schemaport/core).

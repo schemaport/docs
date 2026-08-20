@@ -1,0 +1,250 @@
+---
+title: Safe and lossy compilation
+navTitle: Safe and lossy
+description: The rule at the centre of SchemaPort — representation changes compile, constraint-destroying changes are refused until you say otherwise.
+keywords:
+  - lossy
+  - transformation
+  - allow-lossy
+  - compile
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+This is SchemaPort's most important rule, and the reason the product exists:
+
+> **SchemaPort must never weaken your schema silently.**
+
+A provider that accepts your schema *after quietly dropping `minimum`* has not
+given you a working tool. It has given you a tool that will eventually be called
+with a negative refund amount, and no error anywhere. SchemaPort's job is to
+make that visible before it happens.
+
+## Every change is recorded
+
+`compile` never edits your schema invisibly. Each change it makes is a
+**transformation** with four fields: a stable `code`, the schema `path` it
+applies to, a one-line human-readable `detail`, and the gate — `lossy`.
+
+Transformations are printed by [`compile`](/commands/compile) and stored in the
+[manifest](/reference/manifest), so you can always inspect exactly what happened
+to your schema:
+
+```text
+  • [safe] converted-optional-property-to-nullable at inputSchema.properties.amount
+    Made `amount` required and added `"null"` to its type; strict mode has no optional properties.
+  • [safe] added-additional-properties-false at inputSchema.additionalProperties
+    Added `additionalProperties: false`, which strict mode requires on every object.
+```
+
+## Two kinds of change
+
+### `lossy: false` — a representation change
+
+The compiled schema expresses the same contract in the shape the provider
+requires. No canonical constraint stops being enforced.
+
+Renaming `inputSchema` to the provider's field name. Adding
+`additionalProperties: false` to a schema that was already closed in practice.
+Converting an optional property to required-and-nullable. Normalizing type
+casing to `STRING`.
+
+### `lossy: true` — a constraint-destroying change
+
+The compiled schema accepts inputs your canonical schema rejects, because a
+keyword had to be dropped or weakened for the target to accept the schema at
+all.
+
+Dropping `minimum` / `maximum` / `pattern` / `multipleOf` because the target's
+schema dialect has no such field. Erasing
+`additionalProperties: { type: "string" }` into an untyped map. Collapsing an
+`anyOf` into an untyped value. Truncating an `enum`.
+
+<Note>
+The distinction is not about how much the JSON changed. It is about whether the
+set of argument values the provider will accept grew beyond what your canonical
+schema allows.
+</Note>
+
+Compiling `refund_order` for OpenAI rewrites the schema substantially — three
+paths change, `strict: true` appears, `required` grows from one entry to three
+— and every transformation is `[safe]`, because `minimum: 0`, the enum and the
+type of every property still bind exactly what they bound before.
+
+## The gate
+
+Compilation is **refused** when any transformation is lossy and you did not opt
+in. Here is a tool whose `tags` property is an open map of strings, compiled for
+Gemini:
+
+```json title="tools/tag-resource.json"
+{
+  "name": "tag_resource",
+  "description": "Attaches arbitrary string tags to a resource",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "resourceId": { "type": "string" },
+      "tags": { "type": "object", "additionalProperties": { "type": "string" } }
+    },
+    "required": ["resourceId", "tags"]
+  }
+}
+```
+
+```bash
+schemaport compile tools/ --targets gemini --out generated/
+```
+
+```text
+Tool: tag_resource
+
+Gemini
+✗ Refused. Nothing was written for this target.
+  Compiling for gemini would weaken this schema: dropped-additional-properties at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
+  Path: inputSchema
+  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
+    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
+  • [safe] normalized-type-case at inputSchema
+    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+
+Result: 0 files written to generated, 1 refusal
+```
+
+The command exits 1. Note what it still tells you: the two safe transformations
+are listed as well, so you can see the whole picture rather than only the
+objection.
+
+### Refusal is per tool and target, not per run
+
+A refusal removes exactly one tool/target pair. Everything that compiled cleanly
+is still written. Running that same tool against all four targets ends with:
+
+```text
+Result: 2 files written to generated, 2 refusals
+```
+
+Anthropic and MCP wrote their files; OpenAI and Gemini refused. The run exits 1
+because something was refused, and the refused pairs are simply absent from the
+output directory and from the manifest.
+
+### Opting in
+
+```bash
+schemaport compile tools/ --targets gemini --out generated/ --allow-lossy
+```
+
+```text
+Tool: tag_resource
+
+Gemini
+✓ generated/gemini/tag-resource.json
+  • [lossy] dropped-additional-properties at inputSchema.properties.tags.additionalProperties
+    Dropped `additionalProperties`; Gemini has no such field, so extra properties are accepted.
+  • [safe] renamed-input-schema-to-parameters at inputSchema
+    Emitted `inputSchema` as `FunctionDeclaration.parameters`.
+  • [safe] normalized-type-case at inputSchema
+    Emitted 3 `type` values as Gemini `Type` enum names (`string` -> `STRING`).
+
+Result: 1 file written to generated, 0 refusals
+```
+
+Now it exits 0 and writes the file. The `[lossy]` marker does not go away, and
+neither does the record in the manifest — `--allow-lossy` changes the policy,
+not the accounting. The typed map is gone from the output:
+
+```json title="generated/gemini/tag-resource.json"
+{
+  "name": "tag_resource",
+  "description": "Attaches arbitrary string tags to a resource",
+  "parameters": {
+    "type": "OBJECT",
+    "properties": {
+      "resourceId": {
+        "type": "STRING"
+      },
+      "tags": {
+        "type": "OBJECT"
+      }
+    },
+    "required": [
+      "resourceId",
+      "tags"
+    ]
+  }
+}
+```
+
+`tags` will now accept `{"colour": 42}`. You knew before you agreed to it, which
+is all SchemaPort is trying to guarantee.
+
+### When `--allow-lossy` does not help
+
+Some schemas have no valid representation on a target at all — an OpenAI tool
+name containing characters OpenAI does not allow, for instance. The only "fix"
+would be renaming the tool, which changes the identifier your callers dispatch
+on, so SchemaPort refuses regardless of the flag. `--allow-lossy` accepts a
+weaker schema; it never accepts a different contract.
+
+## One policy, four providers
+
+Provider adapters do not implement the refusal themselves. They mark their
+transformations and return through a single function in
+[`core`](https://github.com/schemaport/core) that applies the policy in one
+place, so all four targets draw the line identically. That shared step also:
+
+- refuses when a diagnostic is an `error` that compile cannot work around,
+  regardless of `--allow-lossy`;
+- drops `error` diagnostics that compile *did* work around, because the
+  transformation record already describes them;
+- always keeps `warning` and `info` diagnostics.
+
+That middle point is why the OpenAI section of a successful `compile` shows no
+`✗` lines even though `check` reported three errors for the same tool. The
+errors were the problem; the transformations are the answer, and they are now
+what you read.
+
+## Lossless is not the same as invisible
+
+This is the subtlety that catches people, so it has its own rule.
+
+A `lossy: false` transformation can still change what the model emits at
+runtime. The clearest case is OpenAI strict mode: an optional `amount` becomes
+required and nullable, so the model sends `{"orderId": "ord_1", "amount": null}`
+where it used to send `{"orderId": "ord_1"}`. No constraint was dropped. But
+your handler now has to treat `null` as "not supplied".
+
+So the rule has a second half: **a transformation that changes runtime behaviour
+must produce a warning**, and that warning survives into the compile result and
+the manifest:
+
+```text
+  • [safe] converted-optional-property-to-nullable at inputSchema.properties.amount
+    Made `amount` required and added `"null"` to its type; strict mode has no optional properties.
+⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.amount
+```
+
+Safe and silent are different words. "Compiled with zero warnings" is only ever
+printed when the provider genuinely preserves the canonical contract, unchanged
+in behaviour as well as in strength.
+
+## The four outcomes
+
+| Situation | Result |
+|---|---|
+| Provider needs a different shape, same contract | Compiles. Transformation recorded. |
+| Provider needs a different shape, runtime behaviour changes | Compiles. Transformation recorded **and** a warning. |
+| Provider cannot express a constraint | Refused. Re-run with `--allow-lossy` to accept it. |
+| Provider cannot express the schema at all | Refused. `--allow-lossy` does not help. |
+
+The one thing that never happens is a schema quietly getting weaker.
+
+## Next
+
+- [`compile`](/commands/compile) — flags, output layout, exit codes.
+- [Manifest](/reference/manifest) — where transformations are recorded.
+- [Compatibility matrix](/providers/compatibility-matrix) — which keywords
+  survive on which target.

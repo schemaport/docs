@@ -1,0 +1,283 @@
+---
+title: Probe the provider APIs
+navTitle: Probe
+description: Ask each provider API whether it really accepts your compiled tool definition, and keep "we could not ask" strictly separate from "the provider said no".
+keywords:
+  - probe
+  - API key
+  - model
+  - accepted
+  - rejected
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+[`check`](/commands/check) tells you what SchemaPort's rules say about your
+schema. `schemaport probe` asks the provider itself. It compiles each tool, sends
+the definition to the provider API, and reports one of four verdicts: accepted,
+rejected, error, or skipped.
+
+It is the only command that needs credentials, and the only one that makes a
+network request.
+
+<Callout>
+**No live probe has been run against these docs.** Probe is fully implemented and
+covered by tests that inject mocked provider SDK clients, but no API keys exist
+in the environment these pages were verified in. Every example below is either a
+credential-free run that was actually executed, or a description of behaviour
+read from the source. No accepted or rejected verdict on this page was observed
+against a real provider.
+</Callout>
+
+## Syntax
+
+```sh
+schemaport probe <path...> [--targets <ids>] [--format text|json] [--model <id>] [--allow-lossy] [--config <file>]
+```
+
+## Prerequisites
+
+Set the API key for each target you want to probe:
+
+```sh
+export OPENAI_API_KEY=<your key>
+export ANTHROPIC_API_KEY=<your key>
+export GEMINI_API_KEY=<your key>
+```
+
+Then run it against your tools:
+
+```sh
+schemaport probe tools/
+```
+
+The three variables above are the exact names SchemaPort reads. Gemini also
+accepts `GOOGLE_API_KEY` as a fallback, though the "no key" message only ever
+names `GEMINI_API_KEY`. MCP has no key because it has no hosted API.
+
+<Note>
+Probe sends the smallest request that answers the question: the tool definition,
+one short synthetic instruction asking the model to call the tool once with
+placeholder values, and a small output cap. Your function is never executed and
+none of your data is sent.
+</Note>
+
+## Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--targets <ids>` | `openai,anthropic,gemini` | Which targets to probe. MCP is excluded by default because it has no hosted API; naming it explicitly reports it as skipped. |
+| `--format text\|json` | `text` | `json` prints one document to stdout and nothing else. |
+| `--model <id>` | the provider's default probe model | Probe with a specific model. |
+| `--allow-lossy` | off | Compile with lossy transformations allowed before probing. Without it, a tool whose compilation is refused is reported as an error and nothing is sent. |
+| `--config <file>` | `./schemaport.config.json` | Load defaults from a different config file. |
+| `--help`, `-h` | — | Print the `probe` reference and exit `0`. |
+
+### Which model is used
+
+Model resolution goes: `--model`, then the provider's environment override, then
+the built-in default. An empty environment variable counts as unset.
+
+| Target | Environment override | Default probe model |
+|---|---|---|
+| `openai` | `SCHEMAPORT_OPENAI_MODEL` | `gpt-5.6-luna` |
+| `anthropic` | `SCHEMAPORT_ANTHROPIC_MODEL` | `claude-haiku-4-5` |
+| `gemini` | `SCHEMAPORT_GEMINI_MODEL` | `gemini-2.5-flash-lite` |
+
+The defaults are small, cheap models — a probe only needs the provider to parse
+the tool definition, not to reason well.
+
+## The four verdicts
+
+| Verdict | Meaning | Effect on the exit code |
+|---|---|---|
+| `✓ ACCEPTED` | The provider accepted the compiled definition. The notes say whether a tool call came back and whether its arguments matched your **canonical** schema. | none |
+| `✗ REJECTED` | The provider rejected the schema. Its own error message is printed verbatim, never paraphrased. | exit `1` |
+| `⚠ ERROR` | No verdict was reached. The `errorKind` says why. | exit `3` — except `errorKind: "compile-refused"`, which makes the whole run exit `1` |
+| `– SKIPPED` | Probing does not apply to this target. | none |
+
+`errorKind` is one of `missing-credentials`, `authentication`, `model-not-found`,
+`rate-limit`, `network`, `compile-refused`, `unsupported` or `unknown`.
+
+<Warning>
+A missing API key is an **environment error** (`3`), never a schema rejection
+(`1`). So is an expired key, a stale `--model`, a rate limit and a network
+failure. The provider adapter classifies the failure and the CLI only renders
+it, which is what stops a machine problem from ever being printed as a verdict
+about your schema.
+</Warning>
+
+### Accepted is not the end of the check
+
+When a tool call comes back, its arguments are validated against your canonical
+input schema — not against the compiled one. That is how a provider that accepted
+a constraint and then ignored it becomes visible instead of being reported as a
+pass. The result carries `argumentsValid`, and `argumentErrors` when it is false.
+
+## A real run, with no credentials
+
+This is what you see when nothing is configured. Every target reports the same
+environment error, and the output names the exact variable and the exact command
+to re-run:
+
+```console
+$ schemaport probe tools/tag-resource.json --targets openai,anthropic,gemini,mcp --allow-lossy
+Tool: tag_resource
+
+OpenAI
+⚠ ERROR — missing-credentials (not a schema rejection)
+  No API key found. Set OPENAI_API_KEY to probe this provider.
+  Set the API key:  export OPENAI_API_KEY=<your key>
+  Then re-run:      schemaport probe tools/tag-resource.json --targets openai,anthropic,gemini,mcp --allow-lossy
+
+Anthropic
+⚠ ERROR — missing-credentials (not a schema rejection)
+  No API key found. Set ANTHROPIC_API_KEY to probe this provider.
+  Set the API key:  export ANTHROPIC_API_KEY=<your key>
+  Then re-run:      schemaport probe tools/tag-resource.json --targets openai,anthropic,gemini,mcp --allow-lossy
+
+Gemini
+⚠ ERROR — missing-credentials (not a schema rejection)
+  No API key found. Set GEMINI_API_KEY to probe this provider.
+  Set the API key:  export GEMINI_API_KEY=<your key>
+  Then re-run:      schemaport probe tools/tag-resource.json --targets openai,anthropic,gemini,mcp --allow-lossy
+
+MCP
+– SKIPPED
+  MCP has no hosted API to probe: it is a protocol that servers implement, and there is no endpoint or API key to send a tool definition to. SchemaPort validates MCP tool definitions locally instead — use validateMcpTool() and validateToolsListResult(), or `schemaport check --targets mcp`.
+
+Result: 0 accepted, 0 rejected, 3 errors, 1 skipped
+```
+
+That run exits `3`.
+
+### MCP is skipped, never failed
+
+MCP is a protocol that servers implement. There is no endpoint to send a tool
+definition to, so probing it is not a failure — it is not applicable. Ask for it
+explicitly and you get `– SKIPPED`; a run where everything is skipped exits `0`.
+Validate MCP definitions locally with `schemaport check --targets mcp` instead.
+
+### A refused compilation exits 1, not 3
+
+If compiling a tool would weaken it, probe sends nothing — there would be no
+point asking the provider about a schema SchemaPort refused to produce:
+
+```console
+$ schemaport probe tools --targets openai
+Tool: tag_resource
+
+OpenAI
+⚠ ERROR — compile-refused (not a schema rejection)
+  Compilation was refused, so no request was sent.
+  Compiling for openai would weaken this schema: dropped-additional-properties-schema at inputSchema.properties.tags.additionalProperties. Re-run with --allow-lossy to accept the weaker output.
+
+Result: 0 accepted, 0 rejected, 1 error, 0 skipped
+```
+
+That run exits **`1`**, not `3`. It renders as `⚠ ERROR` because no verdict was
+reached, but the reason is a fact about your schema, so `--allow-lossy` is what
+unblocks it rather than a change to the machine.
+
+## Machine-readable output
+
+```json
+{
+  "command": "probe",
+  "schemaPortVersion": "0.1.0",
+  "summary": {
+    "accepted": 0,
+    "rejected": 0,
+    "errors": 1,
+    "skipped": 1
+  },
+  "results": [
+    {
+      "source": "tools/refund-order.json",
+      "providerId": "openai",
+      "toolName": "refund_order",
+      "status": "error",
+      "schemaAccepted": false,
+      "toolCallReturned": false,
+      "errorKind": "missing-credentials",
+      "notes": [
+        "No API key found. Set OPENAI_API_KEY to probe this provider."
+      ]
+    },
+    {
+      "source": "tools/refund-order.json",
+      "providerId": "mcp",
+      "toolName": "refund_order",
+      "status": "skipped",
+      "schemaAccepted": false,
+      "toolCallReturned": false,
+      "notes": [
+        "MCP has no hosted API to probe: it is a protocol that servers implement, and there is no endpoint or API key to send a tool definition to. SchemaPort validates MCP tool definitions locally instead — use validateMcpTool() and validateToolsListResult(), or `schemaport check --targets mcp`."
+      ]
+    }
+  ]
+}
+```
+
+Each entry is the provider's `ProbeResult` with `source` added. A rejected result
+also carries `providerError`, whose `message` is the provider's own text
+unmodified. An accepted result that produced a tool call also carries `model`,
+`argumentsReceived`, `argumentsValid` and, when validation failed,
+`argumentErrors`.
+
+## Exit codes
+
+| Code | When |
+|---|---|
+| `0` | Nothing rejected, nothing errored. Accepted and skipped both count as success. |
+| `1` | A provider rejected a schema, or a compilation was refused so nothing was sent. |
+| `3` | No rejection, no refused compilation, and at least one probe reached no verdict. |
+
+The exit code is decided for the run as a whole, in that order. A run containing
+one refused compilation and two missing API keys exits `1`, not `3` — the
+refusal wins, because it is the finding you can act on.
+
+In CI, treat `3` as "could not ask" rather than as a failure:
+
+```sh
+schemaport probe tools/ || [ $? -eq 3 ]
+```
+
+Full table: [Exit codes](/reference/exit-codes).
+
+## When you would use it
+
+- **Once, before you ship a new tool.** `check` is SchemaPort's opinion; `probe`
+  is the provider's answer. They usually agree, and the interesting case is when
+  they do not.
+- **On a schedule, not on every pull request.** Provider schema validation
+  changes without announcement, and a nightly probe is how you find out. Keep
+  `check`, `compile` and `diff` on the pull-request path — they need no
+  credentials and cost nothing.
+- **When a provider rejects a tool in production and you want a small
+  reproduction.** Probe sends the minimum request that reproduces the rejection
+  and prints the provider's error verbatim.
+
+<Tip>
+Because `probe` costs money and needs secrets, put it in its own scheduled CI job
+with the three keys supplied as repository secrets. See
+[Use SchemaPort in CI](/guides/ci).
+</Tip>
+
+## Ownership
+
+The command and its exit codes belong to
+[`cli`](https://github.com/schemaport/cli). Classifying a failure as a rejection
+or an environment error belongs to [`core`](https://github.com/schemaport/core)
+and to each provider package —
+[`provider-openai`](https://github.com/schemaport/provider-openai),
+[`provider-anthropic`](https://github.com/schemaport/provider-anthropic) and
+[`provider-gemini`](https://github.com/schemaport/provider-gemini).
+[`provider-mcp`](https://github.com/schemaport/provider-mcp) deliberately returns
+`skipped` and validates locally instead.
+
+## Next
+
+- [MCP](/providers/mcp) — local validation instead of probing
+- [Exit codes](/reference/exit-codes) — the `1` versus `3` distinction in full
+- [Diff](/commands/diff) — did this release break any callers?

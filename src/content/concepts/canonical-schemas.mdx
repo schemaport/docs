@@ -1,0 +1,158 @@
+---
+title: Canonical schemas
+navTitle: Canonical schemas
+description: The one input format SchemaPort accepts, and why it stays the source of truth for every provider.
+keywords:
+  - canonical tool
+  - inputSchema
+  - json schema
+  - loading
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+SchemaPort has exactly one input format. Every provider adapter reads it and
+nothing else is accepted. It is deliberately close to what most tool-calling
+APIs already use, so adopting SchemaPort rarely means rewriting anything.
+
+```json
+{
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "orderId": { "type": "string", "description": "The order to refund" },
+      "amount": { "type": "number", "minimum": 0 }
+    },
+    "required": ["orderId"]
+  }
+}
+```
+
+Three fields, and only two of them are required:
+
+| Field | Required | Rules |
+|---|---|---|
+| `name` | yes | Non-empty string, no whitespace, at most 128 characters. Provider packages apply their own stricter naming rules on top. |
+| `description` | no | String. |
+| `inputSchema` | yes | A JSON Schema object that must declare `"type": "object"`. |
+
+The complete rules — every supported keyword, every rejected one, and the
+schema-path syntax used in diagnostics — are in
+[Tool format](/reference/tool-format). This page is about what the format
+*means*.
+
+## One schema, many targets
+
+The canonical schema is the contract. Compiled output is derived from it, never
+authoritative. That has three consequences worth internalising early.
+
+**Diff compares canonical schemas, not compiled ones.** A provider-specific
+representation change is not a change to your contract, so it should not show up
+as one. See [Breaking changes](/concepts/breaking-changes).
+
+**Probe validates returned arguments against the canonical schema.** A provider
+that accepted `minimum: 0` and then produced `-50` is reported as
+accepted-but-wrong-shape rather than a clean pass. See
+[`probe`](/commands/probe).
+
+**Generated output is disposable.** Commit it or generate it during a build —
+either works, because compiling the same canonical schema always produces
+byte-identical files. Tools load sorted by name, diagnostics and transformations
+sort by stable keys, and manifests contain no timestamps.
+
+The practical rule: you edit the canonical schema, and only the canonical
+schema. Everything under your `--out` directory is an artefact.
+
+## Why `inputSchema` must be an object
+
+Tool arguments are always a named set. A tool that takes a bare string is not
+expressible in the canonical format, and no target supports it — which is why
+the constraint lives in the format rather than in four separate provider rules.
+
+Making it a format-level rule also means the failure is immediate and local:
+loading rejects the tool, rather than four adapters each discovering the problem
+in their own way and reporting it four different times.
+
+## Source layouts
+
+`schemaport` commands accept a single `.json` file or a directory. Directories
+are walked recursively, skipping `node_modules`, `dist`, `coverage` and
+dot-directories.
+
+A `.json` file may hold any of three shapes:
+
+<CodeGroup>
+```json title="One tool"
+{ "name": "one_tool", "inputSchema": { "type": "object", "properties": {} } }
+```
+
+```json title="An array of tools"
+[
+  { "name": "first", "inputSchema": { "type": "object", "properties": {} } },
+  { "name": "second", "inputSchema": { "type": "object", "properties": {} } }
+]
+```
+
+```json title="A wrapper object"
+{ "tools": [ { "name": "first", "inputSchema": { "type": "object", "properties": {} } } ] }
+```
+</CodeGroup>
+
+Loading never throws on bad input. Malformed files are collected as errors so
+one broken file does not hide the rest of the directory, and tools come back
+sorted by name — which is what makes every downstream output deterministic
+regardless of file-system ordering.
+
+### Tool names must be unique across everything you load
+
+The compiled output directory is keyed by tool name, so two tools called
+`refund_order` would silently overwrite each other. Duplicate names are reported
+as errors instead.
+
+Because the walk is recursive, this applies to the whole tree under the path you
+pass. A layout that keeps two versions side by side, such as the `cli`
+repository's own example:
+
+```text
+examples/refund-order/v1/refund-order.json
+examples/refund-order/v2/refund-order.json
+```
+
+can be loaded as `.../v1` or `.../v2`, and the two can be diffed against each
+other — but `examples/refund-order` would see `refund_order` declared twice.
+Keep version directories as siblings and point commands at one of them.
+
+## What the format deliberately is not
+
+SchemaPort targets the common cases well rather than implementing all of JSON
+Schema, and it says so instead of pretending otherwise.
+
+- **No custom schema language.** Canonical schemas are plain JSON Schema.
+- **No `$ref` resolution.** `$ref`, `$defs` and `definitions` are parsed and
+  walked, but references are never followed. Anything that would require
+  following one reports that it could not be verified rather than passing
+  silently — so recursive schemas are not supported.
+- **No boolean subschemas.** JSON Schema permits `{"properties": {"x": true}}`;
+  the canonical format does not, because the walker only descends into objects
+  and a boolean would be skipped silently. Use `{}` to accept any value.
+  `additionalProperties` is exempt, where a boolean is the normal form.
+- **No source adapters in 0.1.0.** No Zod, Pydantic, TypeBox or OpenAPI input.
+  The JSON workflow works first; adapters can be added cleanly on top later.
+- **No `outputSchema`.** The canonical format describes a tool's *arguments*
+  only.
+
+Unknown keywords are preserved rather than stripped, so nothing is silently lost
+before a provider adapter sees it.
+
+The canonical format is owned by
+[`core`](https://github.com/schemaport/core), which is also why it is identical
+for all four targets.
+
+## Next
+
+- [Tool format](/reference/tool-format) — the full keyword-by-keyword reference.
+- [Compatibility](/concepts/compatibility) — what each provider then says about
+  your schema.
+- [`check`](/commands/check) — run the rules over a directory.

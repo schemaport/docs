@@ -1,14 +1,11 @@
-# Thally Starter
+# SchemaPort documentation
 
-A production-ready documentation site built with the open-source Thally runtime.
-Use this repository as a GitHub template or clone it directly, then replace the
-starter content with documentation for your product.
+The unified documentation site for [SchemaPort](https://github.com/schemaport),
+built with the open-source [Thally](https://docs.thally.app) runtime.
 
-This is the canonical complete template consumed by Thally Cloud, the CLI, and
-the MCP server. Runtime code is authored once in
-[`thallylabs/thally`](https://github.com/thallylabs/thally), then generated into
-this repository as a pinned, byte-identical snapshot. Do not manually repeat a
-runtime fix in both repositories.
+SchemaPort lets you define an AI tool schema once and use it safely across
+OpenAI, Anthropic, Gemini and MCP. The product is built across six independent
+repositories; this site documents them as one product.
 
 ## Run locally
 
@@ -17,48 +14,53 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3040](http://localhost:3040). The next available port is
-used automatically when 3040 is occupied.
+Open [http://localhost:3040](http://localhost:3040).
 
-## Make it yours
-
-- Edit pages in `src/content/`.
-- Organize navigation and features in `docs.json`.
-- Set the product name, links, and versioned brand defaults in `src/data/site.ts`.
-- Replace `openapi.yaml` with your API specification.
-- Add logos or favicons in `public/` and reference them from your site settings.
-
-`starter-release.json` records the immutable starter and runtime version used
-to create the site. Keep it in the repository so `thally starter update` can
-plan framework updates without overwriting your content or portable settings.
-
-Maintainers update the generated runtime snapshot through the **Sync Thally
-runtime** workflow. CI rejects a changed pin without matching files, changed
-files without a matching pin, missing files, and stale runtime files.
-
-Content icons are neutral by default. Set `appearance.contentIcons` to `accent`
-in `docs.json`, or add `iconColor="accent"` to an individual card or tile.
-Public page URLs ending in `.md` are disabled by default; enable them explicitly
-with `markdown.enabled` when that distribution surface fits your access model.
-
-## Validate changes
+## Validate
 
 ```bash
+npx thally check    # content, navigation, links
 npm test
 npm run build
-npm ci --ignore-scripts --prefix .github/thally-tooling
-.github/thally-tooling/node_modules/.bin/thally check --ci .
 ```
 
-## Deploy
+`thally check` reports broken links and orphaned pages. Treat both as errors.
 
-The site is a standard Next.js application. Deploy it through Thally Cloud or
-any compatible Next.js host. Cloudflare Workers configuration is included in
-`open-next.config.ts` and `wrangler.jsonc`.
+## What you edit
 
-Copy `.env.example` to `.env.local` only when you need optional services. Never
-commit real credentials.
+| Path | Purpose |
+| --- | --- |
+| `src/content/**/*.mdx` | Pages. The file path becomes the URL. |
+| `docs.json` | Navigation tabs and groups, navbar, footer. |
+| `src/data/site.ts` | Product identity, description, links, branding. |
+| `public/` | Images, logos, favicons. |
+
+Everything else is the Thally runtime, generated as a pinned snapshot and
+tracked in `starter-release.json`. Do not hand-edit runtime-owned paths.
+
+## Documentation ownership
+
+Each page describes behaviour owned by one of the six source repositories.
+When source behaviour changes, the corresponding pages must change with it.
+
+| Repository | Documents |
+| --- | --- |
+| [`core`](https://github.com/schemaport/core) | `/concepts/*`, `/reference/tool-format`, `/reference/diagnostics` |
+| [`cli`](https://github.com/schemaport/cli) | `/commands/*`, `/reference/configuration`, `/reference/exit-codes`, `/reference/manifest`, `/guides/*` |
+| [`provider-openai`](https://github.com/schemaport/provider-openai) | `/providers/openai` |
+| [`provider-anthropic`](https://github.com/schemaport/provider-anthropic) | `/providers/anthropic` |
+| [`provider-gemini`](https://github.com/schemaport/provider-gemini) | `/providers/gemini` |
+| [`provider-mcp`](https://github.com/schemaport/provider-mcp) | `/providers/mcp` |
+
+`/providers/compatibility-matrix` and `/changelog` aggregate all six.
+
+## Writing
+
+See [`AGENTS.md`](AGENTS.md) for the content model, canonical terminology, and
+the accuracy rules that apply to this product — in particular that
+documentation must never describe behaviour the source repositories do not
+implement, and must never imply a live provider API result was observed.
 
 ## License
 
-[MIT](LICENSE)
+MIT

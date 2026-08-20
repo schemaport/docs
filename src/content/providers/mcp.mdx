@@ -1,0 +1,358 @@
+---
+title: MCP
+navTitle: MCP
+description: MCP speaks JSON Schema, so compilation is close to an identity transform. There is no API to probe, so SchemaPort validates protocol shape locally instead.
+keywords:
+  - mcp
+  - model context protocol
+  - tools/list
+  - validation
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+MCP is the target that gives your canonical schema back to you almost unchanged.
+The protocol defers to JSON Schema and places no restriction on which keywords a
+tool may use, so nothing is ever dropped and there is no lossy path at all.
+Behaviour on this page is owned by
+[`provider-mcp`](https://github.com/schemaport/provider-mcp).
+
+<Note>
+Two dates matter here and they are different on purpose. The **specification
+revision** implemented against is `2026-07-28` — MCP versions its protocol as a
+date, incremented only on a backwards-incompatible change. The **rules review
+date** (`rulesReviewedAt`) is `2026-08-20`, the day these rules were last
+checked against the official documentation.
+</Note>
+
+## The surface SchemaPort targets
+
+MCP has no hosted API and no API key. It is a protocol that servers implement,
+so the target is the `Tool` object as returned from `tools/list`, transcribed
+from the official `schema.ts` for revision `2026-07-28`.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `name` | yes | Unique identifier for the tool |
+| `title` | no | Human-readable display name |
+| `description` | no | A hint to the model |
+| `icons` | no | For display in user interfaces |
+| `inputSchema` | yes | Literal `"type": "object"` at the root |
+| `outputSchema` | no | Any JSON Schema 2020-12; need not be an object schema |
+| `annotations` | no | Behaviour hints only, and untrusted unless the server is |
+| `_meta` | no | Protocol metadata |
+
+`inputSchema` must be a JSON Schema object declaring `type: "object"` at the
+root, because tool arguments are always a JSON object. Beyond that the
+specification is explicit that any JSON Schema 2020-12 keyword may appear
+alongside `type` — composition keywords, conditional keywords, reference
+keywords and every standard validation or annotation keyword. This adapter
+invents no keyword restrictions to compensate.
+
+A schema with no `$schema` field defaults to JSON Schema 2020-12.
+Implementations must support at least that dialect and should document any
+others.
+
+## Compiled output
+
+```console
+$ schemaport compile ./examples/refund-order/v1/refund-order.json --targets mcp --out /tmp/prov-mcp
+Tool: refund_order
+
+MCP
+✓ /tmp/prov-mcp/mcp/refund-order.json
+  No transformations.
+
+Result: 1 file written to /tmp/prov-mcp, 0 refusals
+```
+
+The file it wrote:
+
+```json
+{
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "orderId": {
+        "type": "string",
+        "description": "The order to refund"
+      },
+      "amount": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Amount to refund. Omit to refund the full order."
+      },
+      "refundMethod": {
+        "type": "string",
+        "description": "How to return the funds",
+        "enum": ["original_payment", "store_credit", "bank_transfer"]
+      }
+    },
+    "required": ["orderId"]
+  }
+}
+```
+
+Nothing changed and there were no transformations to record. `minimum: 0`
+survives, the optional `amount` stays optional, the object stays open. That is
+the whole point of MCP as a target: it speaks JSON Schema, so the canonical
+schema is already the answer.
+
+Key order is fixed at `name`, then `description` when present, then
+`inputSchema`, so repeated compilation serializes byte-identically.
+
+`title`, `outputSchema`, `annotations`, `icons` and `_meta` are never emitted —
+the canonical format has no fields to carry them. All five are optional in MCP,
+so the output is still a valid `Tool`; add them yourself after compiling if your
+server needs them.
+
+## Compatibility rules
+
+Because MCP defers to JSON Schema, **most tools produce no diagnostics at all**.
+All six shared fixtures in `core` — including the open string map, the `anyOf`
+union and the tool carrying `pattern`, `multipleOf` and `minItems` — return
+nothing. That is the correct answer, not a missing check.
+
+Thirteen codes, all prefixed `mcp/`.
+
+### Tool names
+
+| Code | Severity | Fires when |
+| --- | --- | --- |
+| `mcp/tool-name-length` | warning | The name is outside 1–128 characters. |
+| `mcp/tool-name-characters` | warning | The name uses characters outside `[A-Za-z0-9_.-]`. |
+
+Both rules are warnings because the specification states them as SHOULD, not
+MUST. Compile emits the name unchanged and still succeeds — renaming a tool
+changes the identity your code dispatches on, and SchemaPort will not do that
+silently. `refund/order:v2` warns; `admin.tools.list`, `DATA_EXPORT_v2` and
+`getUser` do not.
+
+Name uniqueness within a server is also a SHOULD, but it is a whole-server
+property and cannot be decided from one tool, so it is not checked.
+
+### Root type
+
+| Code | Severity | Compile | Fires when |
+| --- | --- | --- | --- |
+| `mcp/input-schema-missing-type` | error | fixes | `inputSchema` declares no `type`. Compile adds `"type": "object"`. |
+| `mcp/input-schema-type-not-literal-object` | error | fixes | `inputSchema.type` is `["object"]` — the right type as a single-element array. Compile rewrites it as the literal string. |
+| `mcp/input-schema-type-union` | warning | fixes | `inputSchema.type` allows `"object"` and other types. Compile narrows to `"object"`. |
+| `mcp/input-schema-not-object` | error | refuses | The root schema does not allow objects at all. Rewriting it would change what the tool accepts. |
+
+The union case is a warning rather than a compile-fixable error on purpose.
+Narrowing is not lossy — the output accepts strictly fewer values — but it
+changes what the model may emit at runtime, and warnings always survive into the
+compile result while compile-fixable errors are dropped from it.
+
+### References and dialect
+
+| Code | Severity | Fires when |
+| --- | --- | --- |
+| `mcp/unresolvable-ref` | warning | A same-document `$ref` that does not resolve to a subschema inside this tool's `inputSchema`. |
+| `mcp/external-ref` | warning | A `$ref` that does not begin with `#` — a network URI or a relative document reference. Implementations MUST NOT automatically dereference these. |
+| `mcp/non-default-schema-dialect` | warning | `inputSchema.$schema` declares a dialect other than JSON Schema 2020-12. Support varies by client. |
+
+SchemaPort resolves no references at all; the `$ref` is emitted exactly as
+written. Resolution *detection* supports the root pointer (`#`), JSON Pointer
+fragments including `~0`/`~1` escapes and array indices, and `$anchor`
+fragments. The target must itself be a schema — a pointer landing on a string,
+such as `#/required/0`, is reported as unresolvable.
+
+### `x-mcp-header`
+
+This is the one place the specification requires a client to reject a tool
+definition outright, so these three are errors and compile refuses.
+
+| Code | Severity | Fires when |
+| --- | --- | --- |
+| `mcp/x-mcp-header-invalid` | error | The value is not a string, is empty, or is not an HTTP field-name token (RFC 9110 §5.6.2). |
+| `mcp/x-mcp-header-duplicate` | error | Two properties in one `inputSchema` declare values that are equal case-insensitively. Reported on the second, naming the first. |
+| `mcp/x-mcp-header-unsupported-type` | error | The annotated property does not declare exactly one of `integer`, `string` or `boolean`. `number` is explicitly not permitted. |
+
+Compile refuses rather than stripping the annotation, because removing it would
+silently drop header routing the author asked for. Clients on transports other
+than Streamable HTTP may ignore `x-mcp-header` entirely, so a violation only
+bites over that transport — this adapter still reports it as an error.
+
+### Annotations
+
+| Code | Severity | Fires when |
+| --- | --- | --- |
+| `mcp/nullable-keyword-ignored` | info | A subschema carries `nullable`, an OpenAPI 3.0 keyword JSON Schema 2020-12 does not define. MCP validators ignore it. Use `"type": ["string", "null"]` or `anyOf` instead. |
+
+Info rather than warning: compile changes nothing and the keyword is emitted as
+written.
+
+## Transformations
+
+Three, all touching only the root `type`, all `lossy: false`.
+
+| Code | When | Detail |
+| --- | --- | --- |
+| `added-input-schema-type-object` | Root schema has no `type` | Adds `"type": "object"` |
+| `normalized-input-schema-type-to-object` | Root `type` is `["object"]` | Rewrites it as the literal string |
+| `narrowed-input-schema-type-to-object` | Root `type` is a union containing `"object"` | Narrows to `"object"`, dropping the others |
+
+<Note>
+**MCP has no lossy path.** All three transformations make the root type at least
+as strict as it was, and no `minimum`, `pattern`, `enum`,
+`additionalProperties` or composition keyword is ever dropped, rewritten or
+truncated. `compile` therefore never needs `--allow-lossy` for this target, and
+passing it changes nothing.
+</Note>
+
+Compilation is refused — `ok: false`, no output — only for the four errors
+compile cannot work around: `mcp/input-schema-not-object` and the three
+`x-mcp-header` errors. The blocking diagnostics stay in the result so you can
+see why, and `--allow-lossy` does not override any of them; they are not lossy
+transformations, they are things SchemaPort refuses to guess at.
+
+## Local validation instead of probing
+
+There is no MCP endpoint, no model and no API key, so there is nothing to probe.
+`probe` is still implemented rather than omitted, so that a caller iterating
+providers gets an explicit, explained verdict instead of having to special-case
+a missing method:
+
+```console
+$ schemaport probe ./examples/refund-order/v1 --targets mcp
+Tool: refund_order
+
+MCP
+– SKIPPED
+  MCP has no hosted API to probe: it is a protocol that servers implement, and there is no endpoint or API key to send a tool definition to. SchemaPort validates MCP tool definitions locally instead — use validateMcpTool() and validateToolsListResult(), or `schemaport check --targets mcp`.
+
+Tool: search_orders
+
+MCP
+– SKIPPED
+  MCP has no hosted API to probe: it is a protocol that servers implement, and there is no endpoint or API key to send a tool definition to. SchemaPort validates MCP tool definitions locally instead — use validateMcpTool() and validateToolsListResult(), or `schemaport check --targets mcp`.
+
+Result: 0 accepted, 0 rejected, 0 errors, 2 skipped
+```
+
+It reads no environment variable, constructs no client and ignores every probe
+option. `apiKeyEnvVar` is deliberately unset on the provider. Note that `mcp` is
+not one of `probe`'s default targets — you have to ask for it explicitly, as
+above.
+
+In its place, two exported helpers validate protocol shape entirely offline.
+
+### `validateMcpTool(value, path?)`
+
+Validates one MCP `Tool` object and returns `{ valid, errors }`, reporting every
+problem rather than only the first. It checks the MUST-level structure of
+revision `2026-07-28`: the value is a JSON object; `name` is a non-empty string;
+`title` and `description` are strings when present; `inputSchema` is present, is
+an object, and declares the literal `"type": "object"`; `outputSchema` is an
+object when present; `annotations` hint fields have the right types; `icons`
+entries carry a non-empty string `src`; and `_meta` is an object when present.
+
+It deliberately does **not** reject unknown keys — `Tool` is an open object that
+carries `_meta` and permits extension keys — and it does not apply SHOULD-level
+naming guidance, validate schemas against a meta-schema, resolve `$ref`, or
+check `x-mcp-header`. Use `check` for those.
+
+### `validateToolsListResult(value, path?)`
+
+Validates the bare `result` object of a `tools/list` response — a
+`ListToolsResult`. Pass `response.result`, not the JSON-RPC envelope; passing
+the envelope fails by design.
+
+It requires `resultType` equal to `"complete"`, a `tools` array whose every
+entry passes `validateMcpTool`, a finite `ttlMs` of at least 0, and a
+`cacheScope` of `"public"` or `"private"`. `nextCursor` must be a string when
+present.
+
+<Warning>
+`resultType`, `ttlMs` and `cacheScope` are all required in revision
+`2026-07-28` and none of them existed in `2025-06-18`. A `tools/list` result
+written for an earlier revision **will fail** this helper. That is intended —
+it is what "implemented against revision 2026-07-28" means — but if you serve an
+earlier revision for backwards compatibility, do not use this helper on those
+responses.
+</Warning>
+
+Compilation output always validates: `validateMcpTool(compile(tool).output)`
+returns `{ valid: true, errors: [] }`, asserted in the test suite for every
+shared fixture.
+
+Neither helper, nor `check`, `compile` or `probe`, makes a network request.
+
+## Known limitations
+
+<AccordionGroup>
+  <Accordion title="This is not an MCP client or server">
+    No transport, no JSON-RPC layer, no session handling, and no runtime
+    dependency on the MCP SDK. This adapter validates and generates tool
+    definitions; wiring them into a server is your job. It cannot tell you
+    whether *your* client will accept a definition, only whether the definition
+    matches the specification.
+  </Accordion>
+  <Accordion title="Subschema traversal is not exhaustive">
+    The `$ref`, `x-mcp-header` and `nullable` rules walk `properties`, `$defs`,
+    `definitions`, `items`, `prefixItems`, `anyOf`, `oneOf`, `allOf`, `not` and
+    object-valued `additionalProperties`. They do not recurse into
+    `if`/`then`/`else`, `patternProperties`, `propertyNames`, `contains`,
+    `dependentSchemas`, `unevaluatedProperties` or `unevaluatedItems`, so one of
+    those keywords hiding under one of these is not reported. This is a core
+    traversal limit, not an MCP one.
+  </Accordion>
+  <Accordion title="Two x-mcp-header constraints are not checked">
+    The specification requires `x-mcp-header` only on properties statically
+    reachable from the schema root; that definition lives in the Streamable HTTP
+    transport specification and is not implemented here. Integer values must
+    also fall within IEEE-754 safe-integer range, which is a property of runtime
+    argument values rather than of the schema and cannot be checked statically.
+  </Accordion>
+  <Accordion title="No meta-schema validation">
+    `inputSchema` is not validated against the JSON Schema 2020-12 meta-schema,
+    so a malformed keyword such as `{"type": "object", "minimum": "ten"}` passes
+    both `check` and `validateMcpTool`. Implementing this would require a JSON
+    Schema validator, which would mean a runtime dependency. Core's
+    `validateCanonicalTool` does perform a structural check of the canonical
+    format before any provider sees the tool.
+  </Accordion>
+  <Accordion title="No composition-depth or description-length bound">
+    The specification says implementations SHOULD bound composition-keyword cost
+    to prevent denial of service, but names no number, and it states no
+    description length limit. No rule is implemented for either — picking a
+    threshold the specification does not state would be inventing a rule, not
+    performing a check. If your client enforces a bound, check against it
+    yourself.
+  </Accordion>
+  <Accordion title="outputSchema cannot be carried">
+    The canonical format is `name`, optional `description`, `inputSchema`. It
+    has no field for MCP's `outputSchema`, which is a first-class part of a tool
+    definition and constrains `structuredContent`. This is the most consequential
+    gap on this target, and it has been reported upstream rather than worked
+    around locally.
+  </Accordion>
+  <Accordion title="Only the root $schema is inspected">
+    `mcp/non-default-schema-dialect` looks at `inputSchema.$schema`. A `$schema`
+    declared on a nested subschema is not reported.
+  </Accordion>
+</AccordionGroup>
+
+## Sources
+
+Every rule comes from the official specification for revision `2026-07-28`.
+These are also exported as `mcpProvider.docs`.
+
+| Title | URL |
+| --- | --- |
+| Tools | https://modelcontextprotocol.io/specification/2026-07-28/server/tools |
+| Tool names | https://modelcontextprotocol.io/specification/2026-07-28/server/tools#tool-names |
+| `x-mcp-header` | https://modelcontextprotocol.io/specification/2026-07-28/server/tools#x-mcp-header |
+| JSON Schema usage | https://modelcontextprotocol.io/specification/2026-07-28/basic#json-schema-usage |
+| `$ref` resolution | https://modelcontextprotocol.io/specification/2026-07-28/basic#ref-resolution |
+| Schema reference | https://modelcontextprotocol.io/specification/2026-07-28/schema |
+| `schema.ts` (source of truth) | https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2026-07-28/schema.ts |
+| Versioning | https://modelcontextprotocol.io/specification/versioning |
+
+Next: see how MCP compares against the API-backed targets in the
+[compatibility matrix](/providers/compatibility-matrix), or run
+[`check`](/commands/check) over your own tools.

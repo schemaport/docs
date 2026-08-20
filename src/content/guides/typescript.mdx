@@ -1,0 +1,386 @@
+---
+title: Use generated schemas from TypeScript
+navTitle: TypeScript
+description: Import compiled tool definitions, pass them to each provider SDK, and handle the null that OpenAI strict mode introduces.
+keywords:
+  - typescript
+  - resolveJsonModule
+  - openai
+  - strict mode
+  - null
+lastVerified: 2026-08-20
+verifiedVersion: 0.1.0
+---
+
+`schemaport compile` writes plain JSON files. In a TypeScript project you import
+them directly and hand them to the provider SDK — no wrapper library, no
+codegen'd client, no runtime dependency on SchemaPort at all.
+
+The one thing that needs your attention is what OpenAI strict mode does to
+optional properties. Compilation converts them to required-and-nullable, so an
+argument your handler used to receive as *absent* now arrives as `null`.
+
+## Prerequisites
+
+Compile the tools first:
+
+```sh
+schemaport compile tools/ --out generated/
+```
+
+That writes `generated/<target>/<tool>.json` for each tool and target, plus
+`generated/manifest.json`. See [`compile`](/commands/compile).
+
+## Turn on `resolveJsonModule`
+
+```json
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "resolveJsonModule": true,
+    "strict": true
+  }
+}
+```
+
+Now the compiled file is an ordinary import. **In an ESM package** — one whose
+`package.json` sets `"type": "module"` — it needs a JSON import attribute:
+
+```ts
+import refundOrder from './generated/openai/refund-order.json' with { type: 'json' };
+```
+
+Without the attribute, `tsc` reports `TS1543` and Node throws
+`ERR_IMPORT_ATTRIBUTE_MISSING` at runtime. In a CommonJS package the plain form
+works, because TypeScript emits a `require()`:
+
+```ts
+import refundOrder from './generated/openai/refund-order.json';
+```
+
+<Warning>
+  TypeScript widens every literal in a JSON import, so `refundOrder.type` is
+  inferred as `string`, not `"function"`. Passing the import straight to the
+  OpenAI SDK fails to compile with `Type 'string' is not assignable to type
+  '"function"'`. The fix is one assertion at the import boundary, shown below —
+  this is a limitation of JSON imports, not a problem with the compiled output.
+</Warning>
+
+## Feed a compiled definition to each SDK
+
+Each target compiles to the exact shape its SDK expects, so the definition drops
+into the `tools` array as-is. Assert the type once, next to the import, and
+everything downstream is fully typed.
+
+<CodeGroup>
+
+```ts OpenAI
+import OpenAI from 'openai';
+import type { FunctionTool } from 'openai/resources/responses/responses';
+import compiled from './generated/openai/refund-order.json' with { type: 'json' };
+
+const refundOrder = compiled as FunctionTool;
+
+const response = await new OpenAI().responses.create({
+  model: 'gpt-5.6-luna',
+  input: 'Refund order ord_1 in full.',
+  tools: [refundOrder],
+});
+```
+
+```ts Anthropic
+import Anthropic from '@anthropic-ai/sdk';
+import type { Tool } from '@anthropic-ai/sdk/resources/messages';
+import compiled from './generated/anthropic/refund-order.json' with { type: 'json' };
+
+const refundOrder = compiled as Tool;
+
+const message = await new Anthropic().messages.create({
+  model: 'claude-haiku-4-5',
+  max_tokens: 1024,
+  messages: [{ role: 'user', content: 'Refund order ord_1 in full.' }],
+  tools: [refundOrder],
+});
+```
+
+```ts Gemini
+import { GoogleGenAI, type FunctionDeclaration } from '@google/genai';
+import compiled from './generated/gemini/refund-order.json' with { type: 'json' };
+
+const refundOrder = compiled as FunctionDeclaration;
+
+const response = await new GoogleGenAI({ apiKey }).models.generateContent({
+  model: 'gemini-2.5-flash-lite',
+  contents: 'Refund order ord_1 in full.',
+  config: { tools: [{ functionDeclarations: [refundOrder] }] },
+});
+```
+
+</CodeGroup>
+
+The compiled MCP file is an MCP `Tool` object, ready to return from a
+`tools/list` response. `@schemaport/provider-mcp` also exports
+`validateMcpTool()` and `validateToolsListResult()` for validating that response
+locally — see [MCP](/providers/mcp).
+
+<Note>
+  The SDK versions each provider package is written against are `openai@7.5.0`,
+  `@anthropic-ai/sdk@0.119.0` and `@google/genai@2.17.1`. Your application picks
+  its own SDK versions; SchemaPort only produces the JSON.
+</Note>
+
+## The consequence of OpenAI strict mode: `null`, not absent
+
+This is the part that changes your handler code.
+
+OpenAI strict mode has no concept of an optional property — every key of
+`properties` must appear in `required`. SchemaPort therefore compiles an
+optional property to a required property whose type includes `"null"`. Here is
+the canonical `refund_order`, where `amount` is optional:
+
+```json
+{
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "orderId": { "type": "string", "description": "The order to refund" },
+      "amount": { "type": "number", "minimum": 0, "description": "Amount to refund. Omit to refund the full order." },
+      "refundMethod": { "type": "string", "description": "How to return the funds", "enum": ["original_payment", "store_credit", "bank_transfer"] }
+    },
+    "required": ["orderId"]
+  }
+}
+```
+
+And here is `generated/openai/refund-order.json`, produced by
+`schemaport compile examples/refund-order/v1 --targets openai --out generated`:
+
+```json
+{
+  "type": "function",
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "orderId": {
+        "type": "string",
+        "description": "The order to refund"
+      },
+      "amount": {
+        "type": [
+          "number",
+          "null"
+        ],
+        "description": "Amount to refund. Omit to refund the full order.",
+        "minimum": 0
+      },
+      "refundMethod": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "How to return the funds",
+        "enum": [
+          "original_payment",
+          "store_credit",
+          "bank_transfer"
+        ]
+      }
+    },
+    "required": [
+      "orderId",
+      "amount",
+      "refundMethod"
+    ],
+    "additionalProperties": false
+  },
+  "strict": true
+}
+```
+
+`amount` and `refundMethod` are now in `required`, and their types are unions
+with `"null"`. Nothing was weakened — the schema still accepts exactly the same
+set of meaningful values, and `minimum: 0` survived — so the transformation is
+recorded as `converted-optional-property-to-nullable` with `lossy: false`. But
+the runtime behaviour changed, which is why `compile` also prints a warning you
+cannot turn off:
+
+```
+⚠ After compilation the model may send `amount: null` instead of omitting the property. Treat `null` as "not supplied" in the handler for `refund_order`.
+  Path: inputSchema.properties.amount
+```
+
+That warning is `openai/nullable-instead-of-omitted`, and it survives into
+`generated/manifest.json` as well as the terminal output. SchemaPort's rule is
+that a change to runtime behaviour must always produce a warning, even when
+nothing was lost — see [Safe and lossy
+compilation](/concepts/safe-and-lossy-compilation).
+
+### Write the handler against the compiled contract
+
+Type the arguments the way the model will actually send them — every property
+present, optional ones nullable — and normalise `null` to "not supplied" at the
+edge:
+
+```ts
+/** Exactly what OpenAI strict mode delivers: every key present, optional ones nullable. */
+interface RefundOrderArgs {
+  orderId: string;
+  amount: number | null;
+  refundMethod: 'original_payment' | 'store_credit' | 'bank_transfer' | null;
+}
+
+/** What the rest of your code should see. */
+interface RefundOrderInput {
+  orderId: string;
+  amount?: number;
+  refundMethod?: 'original_payment' | 'store_credit' | 'bank_transfer';
+}
+
+function normalise(args: RefundOrderArgs): RefundOrderInput {
+  const input: RefundOrderInput = { orderId: args.orderId };
+  // `null` means "the model did not supply a value", not "the value is null".
+  if (args.amount !== null) input.amount = args.amount;
+  if (args.refundMethod !== null) input.refundMethod = args.refundMethod;
+  return input;
+}
+
+export async function refundOrder(raw: unknown) {
+  const { orderId, amount, refundMethod } = normalise(raw as RefundOrderArgs);
+
+  // `amount === undefined` is the documented meaning of the canonical schema:
+  // "Omit to refund the full order."
+  return amount === undefined
+    ? refundFullOrder(orderId, refundMethod)
+    : refundPartial(orderId, amount, refundMethod);
+}
+```
+
+The trap to avoid is `args.amount ?? 0` or a truthiness check. Both silently
+turn "refund the whole order" into "refund nothing", and neither shows up in a
+test that only ever exercises the happy path where the model *did* supply an
+amount.
+
+<Warning>
+  If your canonical schema genuinely distinguishes `{"amount": null}` from
+  `amount` being absent, that distinction cannot survive OpenAI strict mode.
+  Model it explicitly instead — for example a `refundWholeOrder: boolean` — so
+  the meaning is carried by a value rather than by the absence of one.
+</Warning>
+
+### The same schema on the other targets
+
+Only OpenAI does this. Compiled for Anthropic, MCP or Gemini, `amount` stays
+optional and simply does not appear in the arguments when the model omits it:
+
+```json
+{
+  "name": "refund_order",
+  "description": "Refunds all or part of an order",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "orderId": {
+        "type": "string",
+        "description": "The order to refund"
+      },
+      "amount": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Amount to refund. Omit to refund the full order."
+      },
+      "refundMethod": {
+        "type": "string",
+        "description": "How to return the funds",
+        "enum": [
+          "original_payment",
+          "store_credit",
+          "bank_transfer"
+        ]
+      }
+    },
+    "required": [
+      "orderId"
+    ]
+  }
+}
+```
+
+`amount` is still optional and `minimum: 0` is still there — but Anthropic does
+not enforce either by default, which `check` reports as
+`anthropic/schema-not-enforced`. So a handler shared across targets should accept both forms. Treating `null` and
+`undefined` identically — as `normalise` above does — gives you one handler that
+is correct everywhere.
+
+## Commit the output, or generate it at build time
+
+Both are valid, because compilation is deterministic: no timestamps, no
+randomness, no dependence on key order in the source file. Running it twice into
+two directories produces byte-identical files.
+
+<Tabs>
+<Tab title="Commit the output">
+Add `generated/` to version control and refresh it whenever the canonical tools
+change:
+
+```json
+{
+  "scripts": {
+    "tools:build": "schemaport compile tools/ --out generated/"
+  }
+}
+```
+
+CI then proves the committed output is current:
+
+```sh
+schemaport compile tools/ --out generated/
+git diff --exit-code generated/
+```
+
+You get a reviewable diff of what actually goes on the wire — the reviewer of a
+schema change can see that `additionalProperties: false` appeared and that
+`amount` moved into `required`. Deployment needs no build step, and the runtime
+has no dependency on SchemaPort.
+
+</Tab>
+<Tab title="Generate at build time">
+Add the compile to your build and leave `generated/` untracked:
+
+```json
+{
+  "scripts": {
+    "prebuild": "schemaport compile tools/ --out generated/",
+    "build": "tsc"
+  }
+}
+```
+
+No generated files in review, no chance of committing a stale artefact. The cost
+is that a change to what you send the provider is invisible in the diff, and
+that a build now requires `schemaport` to be installed. Pin the version — the
+provider rules that shape the output ship inside the provider packages, so an
+unpinned bump can change your build's result.
+
+</Tab>
+</Tabs>
+
+Whichever you choose, keep `generated/manifest.json` alongside the output. It
+records, per tool and target, the source file, the output path, every
+transformation and every surviving warning — it is how you answer "why does the
+compiled schema look like this?" months later. See
+[Manifest](/reference/manifest).
+
+## Next
+
+- [`compile`](/commands/compile) — flags, `--allow-lossy` and the refusal rule.
+- [OpenAI](/providers/openai) — the full rule set behind strict mode.
+- [Run SchemaPort in CI](/guides/ci) — gate the compile step on staleness.
+
+The compiled OpenAI shape and its transformations are owned by
+[`provider-openai`](https://github.com/schemaport/provider-openai); the
+lossy-versus-safe policy by [`core`](https://github.com/schemaport/core).
