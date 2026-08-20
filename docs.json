@@ -32,20 +32,47 @@
       {
         "group": "Start here",
         "links": [
-          { "label": "Quickstart", "href": "/quickstart" },
-          { "label": "Commands", "href": "/commands/check" },
-          { "label": "Compatibility matrix", "href": "/providers/compatibility-matrix" }
+          {
+            "label": "Quickstart",
+            "href": "/quickstart"
+          },
+          {
+            "label": "Commands",
+            "href": "/commands/check"
+          },
+          {
+            "label": "Compatibility matrix",
+            "href": "/providers/compatibility-matrix"
+          }
         ]
       },
       {
         "group": "Repositories",
         "links": [
-          { "label": "core", "href": "https://github.com/schemaport/core" },
-          { "label": "cli", "href": "https://github.com/schemaport/cli" },
-          { "label": "provider-openai", "href": "https://github.com/schemaport/provider-openai" },
-          { "label": "provider-anthropic", "href": "https://github.com/schemaport/provider-anthropic" },
-          { "label": "provider-gemini", "href": "https://github.com/schemaport/provider-gemini" },
-          { "label": "provider-mcp", "href": "https://github.com/schemaport/provider-mcp" }
+          {
+            "label": "core",
+            "href": "https://github.com/schemaport/core"
+          },
+          {
+            "label": "cli",
+            "href": "https://github.com/schemaport/cli"
+          },
+          {
+            "label": "provider-openai",
+            "href": "https://github.com/schemaport/provider-openai"
+          },
+          {
+            "label": "provider-anthropic",
+            "href": "https://github.com/schemaport/provider-anthropic"
+          },
+          {
+            "label": "provider-gemini",
+            "href": "https://github.com/schemaport/provider-gemini"
+          },
+          {
+            "label": "provider-mcp",
+            "href": "https://github.com/schemaport/provider-mcp"
+          }
         ]
       }
     ]
@@ -55,7 +82,7 @@
       "tab": "Get started",
       "groups": [
         {
-          "group": "Start here",
+          "group": "Overview",
           "pages": [
             "introduction",
             "portability-problem",
