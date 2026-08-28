@@ -4,7 +4,7 @@ The unified documentation site for [SchemaPort](https://github.com/schemaport),
 built with the open-source [Thally](https://docs.thally.app) runtime.
 
 SchemaPort lets you define an AI tool schema once and use it safely across
-OpenAI, Anthropic, Gemini and MCP. The product is built across six independent
+OpenAI, Anthropic, Gemini, and MCP. The product is built across six independent
 repositories; this site documents them as one product.
 
 ## Run locally
