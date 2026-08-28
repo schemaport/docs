@@ -35,6 +35,10 @@ become decorative — which would defeat the point of SchemaPort telling you wha
 is enforced. The cost is that strict mode accepts only a subset of JSON Schema,
 and that is where most lossy compiles come from.
 
+## Probe entry points
+
+The `runOpenAIProbe` alias is exported as a descriptive package-level alias for `probeOpenAI`. Existing callers of `probeOpenAI` remain unchanged and compatible.
+
 ## Compiled output
 
 Compiling the `refund_order` example:
