@@ -37,11 +37,9 @@ and that is where most lossy compiles come from.
 
 ## Probe entry points
 
-The `runOpenAIProbe` alias is exported as a descriptive package-level alias for `probeOpenAI`. Existing callers of `probeOpenAI` remain unchanged and compatible.
-
-## Compiled output
-
-Compiling the `refund_order` example:
+The `compile` method now accepts an optional `options` object with a `strict` property. If `strict` is `true`, the compilation will fail if any unsupported keywords are encountered.
+<!-- thally-cite:v1:81253546ebdc7a070d035dde6ab7dbf33977aafc51b9df1ae7fd8d6aedcb759a -->
+<!-- thally-cite:v1:dcef3dfe167339bd6240729453238faf60c5b7c8b34eed75d24a852daaab7032 -->
 
 ```console
 $ schemaport compile ./examples/refund-order/v1/refund-order.json \
