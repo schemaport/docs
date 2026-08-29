@@ -85,8 +85,9 @@ the built-in default. An empty environment variable counts as unset.
 
 | Target | Environment override | Default probe model |
 |---|---|---|
-| `openai` | `SCHEMAPORT_OPENAI_MODEL` | `gpt-5.6-luna` |
-| `anthropic` | `SCHEMAPORT_ANTHROPIC_MODEL` | `claude-haiku-4-5` |
+The defaults are small, cheap models — a probe only needs the provider to parse the tool definition, not to reason well. For example, OpenAI's default probe model is `gpt-5.6-terra`.
+<!-- thally-cite:v1:ed643f9b7754e8d88403522fa6632da5cbe37ba6cb8799b303f9234624c899e9 -->
+<!-- thally-cite:v1:76bd799938d8af4a158307ac331312f6dbaefb2e70b1e28386fa457a4595130e -->
 | `gemini` | `SCHEMAPORT_GEMINI_MODEL` | `gemini-2.5-flash-lite` |
 
 The defaults are small, cheap models — a probe only needs the provider to parse
