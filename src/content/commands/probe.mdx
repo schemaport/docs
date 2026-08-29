@@ -93,15 +93,9 @@ The defaults are small, cheap models — a probe only needs the provider to pars
 the tool definition, not to reason well.
 
 ## The four verdicts
-
-| Verdict | Meaning | Effect on the exit code |
-|---|---|---|
-| `✓ ACCEPTED` | The provider accepted the compiled definition. The notes say whether a tool call came back and whether its arguments matched your **canonical** schema. | none |
-| `✗ REJECTED` | The provider rejected the schema. Its own error message is printed verbatim, never paraphrased. | exit `1` |
-| `⚠ ERROR` | No verdict was reached. The `errorKind` says why. | exit `3` — except `errorKind: "compile-refused"`, which makes the whole run exit `1` |
-| `– SKIPPED` | Probing does not apply to this target. | none |
-
-`errorKind` is one of `missing-credentials`, `authentication`, `model-not-found`,
+When a tool call comes back, its arguments are validated against your canonical input schema. This validation checks if the provider accepted the schema and then ignored any constraints. If the validation fails, the result carries `argumentsValid` as `false` and `argumentErrors` detailing the discrepancies. This ensures that any provider that accepts a schema but then ignores its constraints is reported as such, rather than being incorrectly marked as passing validation.
+<!-- thally-cite:v1:c7f8ba32862e82f608f2f46722ef9dc948b92052f58203cdb301aa0e96e5d9f6 -->
+<!-- thally-cite:v1:416f4391744a447789edd0c28c1146d709cab3e3addb941b0ba74f5ee219d874 -->
 `rate-limit`, `network`, `compile-refused`, `unsupported` or `unknown`.
 
 <Warning>
