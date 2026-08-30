@@ -93,12 +93,9 @@ Result: 0 breaking, 0 non-breaking, 0 informational
 ### What counts as breaking
 
 A change is breaking when a call that was valid against the old schema may no
-longer be valid against the new one. Adding a required property, narrowing an
-enum, narrowing a type, tightening a numeric bound, adding a pattern and removing
-a tool are all breaking. Loosening the same things is non-breaking, and a
-description change is informational. Anything the diff engine cannot confidently
-classify is reported as breaking, because a false "safe" is the expensive
-mistake. The full classification is on
+Anything the diff engine cannot confidently classify is reported as breaking, because a false 'safe' is the expensive mistake. The full classification is on [Breaking changes](/concepts/breaking-changes). Additionally, making a property required is considered a breaking change, as existing callers may not provide the required value.
+<!-- thally-cite:v1:285914735ca7cb075458347b148390ec51166d974ebd19585cb95f75779cef5e -->
+<!-- thally-cite:v1:047a6948b6c2591cdabf1e28c18fd80f3f31302b605496ddb4e8f6acf1085739 -->
 [Breaking changes](/concepts/breaking-changes).
 
 ## Machine-readable output
