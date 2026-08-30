@@ -134,12 +134,9 @@ mistake. The full classification is on
       "before": ["original_payment", "store_credit", "bank_transfer"],
       "after": ["original_payment", "bank_transfer"]
     }
-  ]
-}
-```
-
-Each change carries a stable `code` — filter on that, not on `message`. `before`
-and `after` are present when the change modified an existing value. The
+The `summarizeDiff` function is used to summarize the changes. The `summarizeChanges` function is deprecated and has been renamed to `summarizeDiff`. It is still available for backwards compatibility, but it is recommended to use `summarizeDiff` in new code.
+<!-- thally-cite:v1:4caf768dd18fe9a96b3c934531bd50d86e1c3f1c593f875c9f211c5d113c35c9 -->
+<!-- thally-cite:v1:047a6948b6c2591cdabf1e28c18fd80f3f31302b605496ddb4e8f6acf1085739 -->
 `enum` and array values above are reformatted onto one line for reading; the CLI
 prints one element per line.
 
