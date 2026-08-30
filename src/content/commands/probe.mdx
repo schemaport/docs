@@ -85,12 +85,12 @@ the built-in default. An empty environment variable counts as unset.
 
 | Target | Environment override | Default probe model |
 |---|---|---|
-| `openai` | `SCHEMAPORT_OPENAI_MODEL` | `gpt-5.6-luna` |
+| `openai` | `SCHEMAPORT_OPENAI_MODEL` | `gpt-5.6-terra` |
 | `anthropic` | `SCHEMAPORT_ANTHROPIC_MODEL` | `claude-haiku-4-5` |
 | `gemini` | `SCHEMAPORT_GEMINI_MODEL` | `gemini-2.5-flash-lite` |
 
-The defaults are small, cheap models — a probe only needs the provider to parse
-the tool definition, not to reason well.
+The defaults are small, inexpensive models — a probe only needs the provider to
+parse the tool definition, not to reason at length.
 
 ## The four verdicts
 

@@ -302,7 +302,7 @@ with your own key.
 
 ```bash
 export OPENAI_API_KEY=sk-...              # required
-export SCHEMAPORT_OPENAI_MODEL=gpt-5.6-luna  # optional, overrides the default
+export SCHEMAPORT_OPENAI_MODEL=gpt-5.6-terra  # optional, overrides the default
 schemaport probe ./tools/refund_order.json --targets openai
 ```
 
@@ -310,14 +310,12 @@ schemaport probe ./tools/refund_order.json --targets openai
 | --- | --- |
 | API key environment variable | `OPENAI_API_KEY` |
 | Model environment variable | `SCHEMAPORT_OPENAI_MODEL` |
-| Default model | `gpt-5.6-luna` |
+| Default model | `gpt-5.6-terra` |
 | Resolution order | `options.model` → `SCHEMAPORT_OPENAI_MODEL` → default |
 
-`gpt-5.6-luna` is the cheapest model on OpenAI's current pricing page listing
-both `function_calling` and `structured_outputs` under supported features.
-`gpt-5-nano` is cheaper, but OpenAI's deprecations page schedules
-`gpt-5-nano-2025-08-07` for shutdown on 2026-12-11 and names `gpt-5.6-luna` as
-its replacement, so defaulting to it would break for everyone in December.
+`gpt-5.6-terra` is the balanced default for live compatibility probes. It
+supports function calling and structured outputs while providing more reasoning
+headroom than the lowest-cost model.
 
 One `POST /v1/responses` is sent: the compiled tool, a short prompt asking for a
 single placeholder call, `tool_choice` pinned to this tool, and a 1024-token
@@ -389,7 +387,7 @@ as `openaiProvider.docs`.
 | Structured model outputs — supported schemas | https://developers.openai.com/api/docs/guides/structured-outputs |
 | API reference — `POST /v1/responses` | https://developers.openai.com/api/docs/api-reference/responses/create |
 | API reference — `POST /v1/chat/completions` (function name rules) | https://developers.openai.com/api/docs/api-reference/chat/create |
-| Models — `gpt-5.6-luna` | https://developers.openai.com/api/docs/models/gpt-5.6-luna |
+| Models — `gpt-5.6-terra` | https://developers.openai.com/api/docs/models/gpt-5.6-terra |
 | Deprecations | https://developers.openai.com/api/docs/deprecations |
 
 Next: compare this target against the others in the
