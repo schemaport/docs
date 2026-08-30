@@ -193,8 +193,9 @@ is required, and *refuses* means compile cannot produce usable output at all.
 | `openai/root-schema-not-object` | error | refuses | `inputSchema.type` is not exactly `object`. |
 | `openai/root-schema-anyof` | error | refuses | The root schema uses `anyOf`, which OpenAI forbids at the root. |
 
-Compile never renames a tool. The name is the identifier your dispatch code
-matches on, so sanitising or truncating it would break the caller.
+Compile never renames a tool. The name is the identifier your dispatch code matches on, so sanitising or truncating it would break the caller. Note that the `quiet` option is now a valid key in the configuration, and it must be a boolean value.
+<!-- thally-cite:v1:d148d71b6f01bf367b5a29fdad321cb8e1201434303b0ae14fd4040992e72353 -->
+<!-- thally-cite:v1:06b66bfa032fff2b4f8ac900aef9893d546b42ba8842b91625e5df5054fc44c7 -->
 
 ### Objects
 
