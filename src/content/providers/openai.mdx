@@ -20,11 +20,11 @@ mode forced it to drop. Behaviour on this page is owned by
 ## The API surface
 
 The target is `POST /v1/responses`, `tools[]`, always with `strict: true`.
-
-Two reasons for the Responses API over Chat Completions. OpenAI's function
-calling guide points new integrations there, and the two request bodies are not
-interchangeable: Chat Completions nests the function under a `function` key
-while the Responses tool is flat. The `parameters` schema is identical in both,
+When using `--targets`, you can specify `all` to include every registered target. Note that `--targets all` and `--targets openai` differ from omitting `--targets`: the default is whatever the command picks, and for `probe` that is the three hosted providers, not all four. Writing `all` says every one, and means it.
+<!-- thally-cite:v1:ea8e95960b53d75e8826043642761b22aae6713a8df493ec961ffdb2993b7d36 -->
+<!-- thally-cite:v1:3d62ca0f3cc168f3745a147c1c0fdf6353566cc42faead9b39a629a632b2bccc -->
+<!-- thally-cite:v1:a21eb617d089adb226831fc4c7b6c2d8e1724a446a06929ac7f2355c44bb41d8 -->
+<!-- thally-cite:v1:406e3e318660dc8bd75e78df3a564f894dde4a0e8107e36c29562862628f1318 -->
 so you can re-wrap the output yourself, but this adapter does not emit that
 form and does not probe against it.
 
