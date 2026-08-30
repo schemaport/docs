@@ -108,6 +108,11 @@ if (summary.breaking > 0) {
   }
   process.exit(1)
 }
+
+// Prose edits bury the changes that matter on a large tool set. Both entry
+// points can drop them; `format`, `default` and `examples` are kept, because
+// each can change what the model sends.
+diffToolSets(before, after, { ignoreDescriptions: true })
 ```
 
 ## Validate a value against a canonical schema
@@ -138,13 +143,13 @@ most likely to need:
 | Diagnostics | `diagnostic`, `compilable`, `compilableLossy`, `notCompilable`, `sortDiagnostics`, `countBySeverity`, `hasBlockingErrors` |
 | Compilation | `finalizeCompile`, `transformation`, `isLossy` |
 | Probing | `probeAccepted`, `probeRejected`, `probeMissingCredentials`, `probeCompileRefused`, `probeError`, `probeSkipped`, `classifyProviderError`, `toErrorDetail`, `resolveApiKey`, `resolveProbeModel`, `probePrompt` |
-| Diff | `diffToolSets`, `diffTools`, `summarizeChanges` |
+| Diff | `diffToolSets`, `diffTools`, `summarizeChanges`, `DiffOptions` |
 | Fixtures | `refundOrderTool`, `minimalTool`, `nestedTool`, `openMapTool`, `unionTool`, `constraintTool`, `FIXTURE_TOOLS`, `INVALID_TOOL_VALUES` |
 | Version | `SCHEMAPORT_VERSION` |
 
 Types are exported alongside them: `CanonicalTool`, `JsonSchema`, `Diagnostic`,
 `CompileResult`, `Transformation`, `ProbeResult`, `ProbeOptions`,
-`SchemaPortProvider`, `SchemaChange`, `DiffResult`, and others.
+`SchemaPortProvider`, `SchemaChange`, `DiffResult`, `DiffOptions`, and others.
 
 ## Shared test fixtures
 
