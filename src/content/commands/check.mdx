@@ -112,7 +112,9 @@ $ echo $?
 ```
 
 `check` exits `1` because errors are present. That is correct and expected here:
-the canonical schema cannot be handed to OpenAI as written. Run
+    ctx.out.line(`Result: ${totals.error} error${totals.error === 1 ? '' : 's'}, ${totals.warning} warning${totals.warning === 1 ? '' : 's'}`);
+<!-- thally-cite:v1:84383f6503ff99dea4f2e12d99b46fcaa90f422a349e11c38308fa36d50fce95 -->
+<!-- thally-cite:v1:a87e9188b6e54d5877c42c998ee6e370d39e1dee01e0b549e4958608df6484ea -->
 [`compile`](/commands/compile) to produce the version that can, or see
 [exit codes](/reference/exit-codes) for tuning this in CI.
 

@@ -22,9 +22,9 @@ mode forced it to drop. Behaviour on this page is owned by
 The target is `POST /v1/responses`, `tools[]`, always with `strict: true`.
 
 Two reasons for the Responses API over Chat Completions. OpenAI's function
-calling guide points new integrations there, and the two request bodies are not
-interchangeable: Chat Completions nests the function under a `function` key
-while the Responses tool is flat. The `parameters` schema is identical in both,
+25|  /** `check --quiet`: print the headline status per target, not every finding. */
+<!-- thally-cite:v1:826a31516409ee52c4eff8eb4d69224b42415b4d921b66f910337001f94b15f6 -->
+<!-- thally-cite:v1:01198e0a2978aac399b4947e97e7e6051350f4ad69afc791a0b415441019ea5a -->
 so you can re-wrap the output yourself, but this adapter does not emit that
 form and does not probe against it.
 
