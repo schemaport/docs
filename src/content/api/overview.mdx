@@ -123,7 +123,27 @@ const { valid, errors } = validateValue(tool.inputSchema, { orderId: 'ord_1' })
 ```
 
 `$ref` is never resolved: a schema containing one reports that the value could
-not be verified rather than silently passing.
+not be verified rather than silently passing. Every such error carries
+`UNVERIFIED_MARKER`, so callers can distinguish "not checked" from "checked and
+wrong" without matching on the message text.
+
+## Check that a schema's own literals are consistent
+
+`validateSchemaValues` checks that every `default` and `const` in a schema
+satisfies the constraints around it. `validateCanonicalTool` runs it
+automatically, so loading a tool catches self-contradictory schemas:
+
+```ts
+import { validateSchemaValues } from '@schemaport/core'
+
+const issues = validateSchemaValues(tool.inputSchema, 'inputSchema')
+// issues[0].message → '`default` is 0, which its own schema rejects: …'
+// issues[0].path   → 'inputSchema.properties.amount.default'
+```
+
+Only `default` and `const` are checked — `examples` is deliberately excluded
+because it is documentation, never sent as guidance, and an issue here removes
+the whole tool. The check is also skipped where a `$ref` could not be resolved.
 
 ## Exported surface
 
@@ -133,7 +153,7 @@ most likely to need:
 | Area | Exports |
 | --- | --- |
 | Loading | `loadTools`, `toolFileBaseName`, `displayPath` |
-| Validation | `validateCanonicalTool`, `isCanonicalTool`, `validateValue` |
+| Validation | `validateCanonicalTool`, `isCanonicalTool`, `validateValue`, `validateSchemaValues`, `UNVERIFIED_MARKER` |
 | Schema utilities | `walkSchema`, `collectSchemas`, `joinPath`, `schemaTypes`, `asSchema`, `deepEqual`, `cloneSchema`, `stableStringify`, `compareStrings` |
 | Diagnostics | `diagnostic`, `compilable`, `compilableLossy`, `notCompilable`, `sortDiagnostics`, `countBySeverity`, `hasBlockingErrors` |
 | Compilation | `finalizeCompile`, `transformation`, `isLossy` |
