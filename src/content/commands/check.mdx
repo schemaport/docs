@@ -36,7 +36,7 @@ recursively. You can omit the path entirely when `schemaport.config.json` sets
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--targets <ids>` | all four | Comma-separated list of `openai`, `anthropic`, `gemini`, `mcp`. Results are printed in the order you list them. An unknown id exits `2`. |
+| `--targets <ids>` | all four | Comma-separated list of `openai`, `anthropic`, `gemini`, `mcp`, or the shorthand `all`. Results are printed in the order you list them. An unknown id exits `2` and lists the valid ids. |
 | `--format text\|json` | `text` | `json` prints exactly one document to stdout and nothing else. |
 | `--fail-on error\|warning\|never` | `error` | The severity at which the run exits `1`. `never` always exits `0`. |
 | `--config <file>` | `./schemaport.config.json` | Load defaults from a different config file. A `--config` that does not exist exits `2`. |

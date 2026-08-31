@@ -71,7 +71,7 @@ none of your data is sent.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--targets <ids>` | `openai,anthropic,gemini` | Which targets to probe. MCP is excluded by default because it has no hosted API; naming it explicitly reports it as skipped. |
+| `--targets <ids>` | `openai,anthropic,gemini` | Which targets to probe. MCP is excluded by default because it has no hosted API; naming it explicitly reports it as skipped. `all` adds MCP, which reports `skipped`. |
 | `--format text\|json` | `text` | `json` prints one document to stdout and nothing else. |
 | `--model <id>` | the provider's default probe model | Probe with a specific model. |
 | `--allow-lossy` | off | Compile with lossy transformations allowed before probing. Without it, a tool whose compilation is refused is reported as an error and nothing is sent. |
