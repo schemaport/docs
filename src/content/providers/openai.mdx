@@ -177,7 +177,7 @@ assuming an unfamiliar keyword is decorative would be the unsafe guess.
 
 ## Compatibility rules
 
-All 27 codes are prefixed `openai/`, and each carries a path and a `docsUrl`
+All 30 codes are prefixed `openai/`, and each carries a path and a `docsUrl`
 pointing at the official page it came from. In the **Compile** column,
 *fixes* means compile produces usable output and nothing is lost, *fixes
 (lossy)* means output is produced but a constraint is dropped so `--allow-lossy`
@@ -245,16 +245,38 @@ result and the manifest, so it is a separate warning at the same path,
 
 ### Size limits
 
-All five refuse, because trimming a schema to fit a limit would mean deleting
-part of your contract.
+The five **exceeded-limit** rules all refuse, because trimming a schema to fit a
+size limit would mean deleting part of your contract. Three further
+**near-limit** rules fire *below* the ceiling and refuse nothing — they warn
+when a budget is above 90% of its limit so you have time to act before the next
+addition triggers a rejection.
 
-| Code | Limit |
-| --- | --- |
-| `openai/too-many-properties` | 5000 total object properties |
-| `openai/schema-too-deep` | 10 levels of nesting |
-| `openai/too-many-enum-values` | 1000 enum values across all properties |
-| `openai/large-enum-too-long` | an enum over 250 values may not exceed 15,000 characters of total string length |
-| `openai/schema-too-large` | 120,000 characters across property names, definition names and enum values |
+| Code | Severity | Compile | What it checks |
+| --- | --- | --- | --- |
+| `openai/too-many-properties` | error | refuses | More than 5000 properties in total. |
+| `openai/property-count-near-limit` | warning | fixes | Property count is above 90% of 5000 but does not exceed it. |
+| `openai/schema-too-deep` | error | refuses | More than 10 levels of nesting. |
+| `openai/too-many-enum-values` | error | refuses | More than 1000 enum values across all properties. |
+| `openai/enum-values-near-limit` | warning | fixes | Enum-value count is above 90% of 1000 but does not exceed it. |
+| `openai/large-enum-too-long` | error | refuses | An enum with more than 250 values whose string values total more than 15,000 characters. |
+| `openai/schema-too-large` | error | refuses | Property names, definition names and enum values total more than 120,000 characters. |
+| `openai/schema-size-near-limit` | warning | fixes | Total string length is above 90% of 120,000 but does not exceed it. |
+
+Each near-limit warning states the headroom left. At exactly the limit it says
+"There is no headroom left: any addition will make OpenAI reject the tool."
+Each is branched off its own refusal, so a schema over the limit gets the error
+alone — never two findings about the same number.
+
+The 90% threshold is exported as `SIZE_WARNING_FRACTION` so it can be read
+rather than guessed at. It is a judgement, not a figure OpenAI documents.
+
+`openai/large-enum-too-long` has no near-limit warning: it is a conditional
+rule about one enum rather than a budget accumulating across the schema, so
+there is no single number to be close to.
+
+The near-limit warnings compile unchanged — `compile.supported` is `true`,
+`compile.lossy` is `false`, there is no accompanying `Transformation`, and
+`--allow-lossy` is irrelevant.
 
 ## Transformations
 
