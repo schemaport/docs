@@ -172,6 +172,26 @@ Loading also validates the ones it understands: `required` must list properties
 that are actually declared, `enum` must be a non-empty array, the numeric
 keywords must be numbers, and `pattern` must be a valid regular expression.
 
+**Literal values must satisfy the schema they sit in.** JSON Schema does not
+validate `default` or `const` against their own subschema, so this is legal
+everywhere else:
+
+```json
+{ "type": "number", "minimum": 10, "default": 0 }
+{ "type": "string", "enum": ["basic", "pro"], "default": "enterprise" }
+```
+
+SchemaPort rejects both. A `default` is emitted by every adapter and read by the
+model as guidance, so an invalid one steers the model towards a call the schema
+will reject; a `const` that fails its sibling constraints describes a property
+no value can satisfy.
+
+`examples` is deliberately **not** checked. It is documentation, it is never
+sent as guidance, and a load issue removes the whole tool — losing a tool over a
+typo in a doc example would be worse than the typo. The check is also skipped
+where a `$ref` could not be resolved: "not verified" is not evidence of a bad
+value.
+
 ## What is deliberately unsupported
 
 <AccordionGroup>
@@ -204,10 +224,9 @@ The canonical format describes a tool's **arguments** only. MCP's `outputSchema`
 and provider structured-output response schemas are out of scope for 0.1.0.
   </Accordion>
   <Accordion title="No if/then/else, dependentSchemas or patternProperties">
-These are not part of the supported subset. `not` is walked so that a boolean
-inside it is caught, but it is not evaluated during value validation, and neither
-are `if`/`then`/`else` or `dependentSchemas`. `format` is not enforced —
-providers treat it as advisory.
+These are not part of the supported subset. `if`/`then`/`else` and
+`dependentSchemas` are ignored during value validation. `format` is not
+enforced — providers treat it as advisory.
   </Accordion>
   <Accordion title="No source adapters">
 There is no custom schema language and no Zod, Pydantic, TypeBox or OpenAPI
