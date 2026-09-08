@@ -7,7 +7,7 @@
  * current-page state.
  */
 
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -17,7 +17,9 @@ vi.mock('next/navigation', () => ({
 }))
 
 import { Card, Tile } from '@/components/mdx/rich-content'
+import { AgentPrompt } from '@/components/mdx/agent-prompt'
 import { DocHeader } from '@/components/docs/doc-header'
+import { Footer } from '@/components/layout/footer'
 import { Sidebar } from '@/components/navigation/sidebar'
 import type { DocEntry } from '@/data/docs'
 
@@ -29,7 +31,7 @@ describe('documentation visual system', () => {
   it.each([
     ['card', Card],
     ['tile', Tile],
-  ])('keeps %s icons neutral while preserving border-only surfaces', (_, Component) => {
+  ])('keeps %s icons token-driven while preserving border-only surfaces', (_, Component) => {
     const markup = renderToStaticMarkup(
       createElement(
         Component,
@@ -41,7 +43,7 @@ describe('documentation visual system', () => {
     expect(markup).toContain('thally-content-icon')
     expect(markup).toContain('data-content-icon-tone="site"')
     expect(markup).toContain('border border-border')
-    expect(markup).toContain('hover:border-foreground/25')
+    expect(markup).toContain('hover:border-accent')
     expect(markup).not.toContain('hover:bg-')
     expect(markup).not.toContain('shadow-')
   })
@@ -109,7 +111,23 @@ describe('documentation visual system', () => {
     expect(withoutEyebrow).not.toContain('thally-docs-eyebrow')
   })
 
-  it('renders the eyebrow as bold sentence case, never uppercase', () => {
+  it('can remove the copy action without removing the document header', () => {
+    const doc = {
+      id: 'guides/writing-content',
+      title: 'Write great content',
+      description: 'How to structure pages.',
+      href: '/guides/writing-content',
+    } as DocEntry
+
+    const markup = renderToStaticMarkup(
+      createElement(DocHeader, { doc, showCopyPage: false }),
+    )
+
+    expect(markup).toContain(doc.title)
+    expect(markup).not.toContain('Copy page')
+  })
+
+  it('renders the eyebrow as semibold sentence case, never uppercase', () => {
     const doc = {
       id: 'guides/writing-content',
       title: 'Write great content',
@@ -121,8 +139,23 @@ describe('documentation visual system', () => {
       createElement(DocHeader, { doc, eyebrow: 'Design your docs' }),
     )
 
-    expect(markup).toContain('font-bold')
+    expect(markup).toContain('font-semibold')
     expect(markup).not.toContain('uppercase')
+  })
+
+  it('keeps agent prompts as two-line callouts with a secondary copy action', () => {
+    const props: ComponentProps<typeof AgentPrompt> = {
+      title: 'Copy a complete prompt to write a page',
+      children: createElement('p', null, 'Write one task-focused page.'),
+    }
+    const markup = renderToStaticMarkup(
+      createElement(AgentPrompt, props),
+    )
+
+    expect(markup).toContain('Prefer to let an agent do it?')
+    expect(markup).toContain('Copy a complete prompt to write a page')
+    expect(markup).toContain('border border-input bg-background')
+    expect(markup).not.toContain('bg-primary')
   })
 
   it('suppresses a group heading that repeats the tab label', () => {
@@ -167,7 +200,142 @@ describe('documentation visual system', () => {
     expect(markup).not.toContain('thally-sidebar-indicator')
     expect(markup).not.toContain('bg-border')
     expect(markup).toContain('aria-current="page"')
-    expect(markup).toContain('bg-muted/70')
+    expect(markup).toContain('bg-accent/10')
+    expect(markup).toContain('text-accent')
+    expect(markup).toContain('text-sm')
+  })
+
+  it('renders nested groups recursively instead of flattening duplicate headings', () => {
+    const triggering = { id: 'triggering', title: 'Triggering', href: '/triggering' }
+    const overview = { id: 'tasks-overview', title: 'Overview', href: '/tasks/overview' }
+    const runs = { id: 'runs', title: 'Runs', href: '/runs' }
+    const markup = renderToStaticMarkup(
+      createElement(Sidebar, {
+        title: 'Documentation',
+        sections: [{
+          id: 'fundamentals',
+          title: 'Fundamentals',
+          items: [triggering, overview, runs],
+          nodes: [
+            { type: 'page', item: triggering },
+            {
+              type: 'group',
+              group: {
+                id: 'fundamentals-tasks',
+                title: 'Tasks',
+                nodes: [{ type: 'page', item: overview }],
+              },
+            },
+            { type: 'page', item: runs },
+          ],
+        }],
+      }),
+    )
+
+    expect(markup).toContain('aria-expanded="false"')
+    expect(markup).toContain('Tasks')
+    expect(markup).not.toContain('Fundamentals • Tasks')
+    expect(markup.indexOf('Triggering')).toBeLessThan(markup.indexOf('Tasks'))
+    expect(markup.indexOf('Tasks')).toBeLessThan(markup.indexOf('Runs'))
+  })
+
+  it('can suppress authored group icons without removing group headings', () => {
+    const sections = [{
+      id: 'guides',
+      title: 'Guides',
+      icon: 'book-open',
+      items: [{ id: 'quickstart', title: 'Quickstart', href: '/guides/quickstart' }],
+      nodes: [{
+        type: 'group' as const,
+        group: {
+          id: 'tools',
+          title: 'Developer tools',
+          icon: 'code',
+          nodes: [{
+            type: 'page' as const,
+            item: { id: 'quickstart', title: 'Quickstart', href: '/guides/quickstart' },
+          }],
+        },
+      }],
+    }]
+    const withIcons = renderToStaticMarkup(
+      createElement(Sidebar, { title: 'Documentation', sections }),
+    )
+    const withoutIcons = renderToStaticMarkup(
+      createElement(Sidebar, {
+        title: 'Documentation',
+        sections,
+        showGroupIcons: false,
+      }),
+    )
+
+    expect(withIcons).toContain('data-icon-name="book-open"')
+    expect(withIcons).toContain('data-icon-name="code"')
+    expect(withoutIcons).not.toContain('data-icon-name="book-open"')
+    expect(withoutIcons).not.toContain('data-icon-name="code"')
+    expect(withoutIcons).toContain('Developer tools')
+  })
+
+  it('renders source dropdown metadata as a sidebar collection selector', () => {
+    const sections = [{
+      id: 'start',
+      title: 'Getting started',
+      items: [{ id: 'introduction', title: 'Introduction', href: '/' }],
+    }]
+    const markup = renderToStaticMarkup(
+      createElement(Sidebar, {
+        title: 'Documentation',
+        sections,
+        collections: [
+          {
+            id: 'documentation',
+            label: 'Documentation',
+            description: 'Resources for developers',
+            icon: 'book-open',
+            sections,
+          },
+          {
+            id: 'api-reference',
+            label: 'API reference',
+            description: 'The product API',
+            icon: 'code',
+            sections: [{
+              id: 'api',
+              title: 'API reference',
+              items: [{ id: 'api-overview', title: 'Overview', href: '/api/overview' }],
+            }],
+          },
+        ],
+        activeCollectionId: 'documentation',
+        onCollectionChange: vi.fn(),
+        navigationPresentation: { display: 'dropdown' },
+      }),
+    )
+
+    expect(markup).toContain('thally-collection-selector')
+    expect(markup).toContain('Resources for developers')
+    expect(markup).toContain('href="/api/overview"')
+  })
+
+  it('keeps a readable sidebar title when a dropdown has only one collection', () => {
+    const sections = [{
+      id: 'start',
+      title: 'Getting started',
+      items: [{ id: 'introduction', title: 'Introduction', href: '/' }],
+    }]
+    const markup = renderToStaticMarkup(
+      createElement(Sidebar, {
+        title: 'Documentation',
+        sections,
+        collections: [{ id: 'documentation', label: 'Documentation', sections }],
+        activeCollectionId: 'documentation',
+        onCollectionChange: vi.fn(),
+        navigationPresentation: { display: 'dropdown' },
+      }),
+    )
+
+    expect(markup).not.toContain('thally-collection-selector')
+    expect(markup).toContain('Documentation')
   })
 
   it('keeps the standard navbar spacious and reserves compaction for dense navigation', async () => {
@@ -183,40 +351,77 @@ describe('documentation visual system', () => {
     expect(topBar).toContain("data-density={isCrowded ? 'compact' : 'comfortable'}")
     expect(topBar).not.toContain('data-navigation-mode')
     expect(topBar).not.toContain('isNavigationCompact')
-    expect(topBar).toContain("className={cn('thally-docs-topbar-inner flex h-14")
-    expect(topBar).toContain('thally-docs-primary inline-flex h-[30px] shrink-0')
-    expect(css).toMatch(/\.thally-docs-search \{\s*width: 280px;/)
+    expect(topBar).toContain("className={cn('thally-docs-topbar-inner flex h-[60px]")
+    expect(topBar).toContain('thally-docs-primary inline-flex h-9 shrink-0')
+    expect(css).toMatch(/\.thally-docs-search \{\s*width: 230px;/)
     expect(css).toContain("[data-density='compact'] .thally-docs-search")
-    expect(css).toContain('padding-inline: 10px 46px')
+    expect(css).toContain('padding-inline: 12px 44px')
     expect(css).toMatch(
       /\.thally-docs-search > button:first-of-type kbd \{[\s\S]*?position: absolute;[\s\S]*?inset-inline-end: 4px;/,
     )
     expect(css).toMatch(
-      /@media \(max-width: 1010px\) \{[\s\S]*?\.thally-docs-topbar-inner > button\[aria-haspopup='dialog'\][\s\S]*?display: inline-flex;/,
+      /@media \(max-width: 880px\) \{[\s\S]*?\.thally-docs-topbar-inner > button\[aria-haspopup='dialog'\][\s\S]*?display: inline-flex;/,
     )
     expect(css).not.toContain("[data-navigation-mode='compact']")
     expect(css).toMatch(
-      /@media \(max-width: 860px\) \{[\s\S]*?\.thally-docs-brand > span:last-child[\s\S]*?\.thally-docs-search,[\s\S]*?width: 30px;/,
+      /@media \(max-width: 880px\) \{[\s\S]*?\.thally-docs-brand > span:last-child[\s\S]*?\.thally-docs-search,[\s\S]*?width: 36px;/,
     )
     expect(css).toMatch(
       /\.thally-callout-content > :last-child \{\s*margin-bottom: 0;/,
     )
-    expect(layout).toContain("topbarHeight: 'h-14'")
-    expect(shell).toContain('calc(100dvh-56px)')
-    expect(sidebar).toContain('sticky top-14')
+    expect(layout).toContain("topbarHeight: 'h-[60px]'")
+    expect(shell).toContain('calc(100dvh-var(--docs-header-height,60px))')
+    expect(sidebar).toContain('sticky top-[var(--docs-header-height,60px)]')
+    expect(css).toContain('--docs-header-height: 60px')
+    expect(css).toMatch(/@media \(min-width: 881px\) \{\s*\.thally-docs-root\[data-header-layout='stacked'\] \{\s*--docs-header-height: 104px;/)
+    expect(css).not.toContain(".thally-docs-root[data-navigation='tabs']")
+    expect(css).toMatch(/@media \(max-width: 880px\) \{[\s\S]*?\.thally-docs-collection-row \{\s*display: none;/)
+    expect(css).not.toContain('thally-docs-inline-collections')
+    expect(css).toContain('scroll-margin-top: calc(var(--docs-header-height, 104px) + 24px)')
+    expect(css).toMatch(/\.thally-docs-tabs \.thally-nav-tab-item \{[^}]*flex: 0 0 auto;[^}]*min-width: 0;[^}]*max-width: 100%;/)
+    expect(css).toMatch(/\.thally-docs-tabs \.thally-nav-tab-item \{[^}]*white-space: normal;[^}]*overflow-wrap: anywhere;/)
+    expect(css).toContain('calc(280px / var(--collection-count))')
+    expect(css).toMatch(/\.thally-docs-topbar-inner,\s*\.thally-docs-collection-row \{[^}]*max-width: 1280px;[^}]*padding-inline: 28px;/)
+    expect(css).not.toMatch(/\.thally-docs-collection-row \{[^}]*max-width: none;/)
+    expect(css).toMatch(/\.thally-docs-tabs \{[^}]*font-size: 0.875rem;/)
+    expect(css).toMatch(/\.thally-docs-tabs \{[^}]*flex-wrap: wrap;/)
+    expect(css).not.toMatch(/\.thally-docs-tabs \{[^}]*overflow-x:/)
+    expect(css).toMatch(/\.thally-docs-tabs \.thally-nav-tab-item \{[^}]*min-height: 44px;/)
   })
 
-  it('keeps the page interactive while chat is docked and accepts the live Cloud icon', async () => {
+  it('moves legacy navbar GitHub destinations into the footer', async () => {
     const { readFile } = await import('node:fs/promises')
-    const [chat, loader, statusRoute] = await Promise.all([
+    const topBar = await readFile('src/components/layout/top-bar.tsx', 'utf8')
+    expect(topBar).toContain("filter((link) => link.type !== 'github')")
+
+    const markup = renderToStaticMarkup(createElement(Footer, {
+      footerConfig: null,
+      githubHref: 'https://github.com/example/docs',
+      siteName: 'Example',
+      siteLinks: [{ label: 'Support', href: '/support' }],
+    }))
+
+    expect(markup).toContain('href="https://github.com/example/docs"')
+    expect(markup).toContain('href="/support"')
+  })
+
+  it('docks chat below the top bar with the fixed Thally identity', async () => {
+    const { readFile } = await import('node:fs/promises')
+    const [chat, provider, statusRoute] = await Promise.all([
       readFile('src/components/docs/docs-chat.tsx', 'utf8'),
-      readFile('src/components/docs/docs-chat-loader.tsx', 'utf8'),
+      readFile('src/components/docs/code-actions-provider.tsx', 'utf8'),
       readFile('src/app/api/chat-status/route.ts', 'utf8'),
     ])
 
-    expect(chat).not.toContain("root.style.overflow = 'hidden'")
-    expect(chat).not.toContain('document.body.style.paddingRight')
-    expect(loader).toContain('icon={status.icon ?? icon}')
+    expect(chat).not.toContain('thally-docs-chat-scrim')
+    expect(chat).toContain('top-[var(--docs-header-height,60px)]')
+    expect(chat).not.toContain('top-[60px]')
+    expect(provider).toContain('<div className="contents" data-docs-layout>')
+    expect(chat).toContain("event.key === 'Escape'")
+    expect(chat).toContain('/brand/default-favicon-light.svg')
+    expect(chat).toContain("width: expanded ? 'min(680px, 100vw)' : 'min(420px, 100vw)'")
+    expect(chat).not.toContain('<FabIcon')
+    expect(provider).toContain('icon={chatStatus.icon ?? icon}')
     expect(statusRoute).toContain("/^\\/[A-Za-z0-9._/-]+$/")
     expect(statusRoute).toContain('{ show, label, disclaimer, icon }')
   })

@@ -1,8 +1,10 @@
 /** Request-bound documentation shell shared by every rendered content route. */
 
+import { shouldShowPoweredBy } from '@/lib/cloud-link/powered-by'
+import { getBuildContentControls } from '@/lib/cloud-link/content-controls'
 import { SiteShell } from '@/components/layout/site-shell'
 import { SidebarCollectionsHydrator } from '@/components/layout/sidebar-hydrator'
-import { loadSidebarCollections, getAiConfig, getNavbarConfig, getFooterConfig } from '@/data/docs'
+import { loadSidebarCollections, getAiConfig, getNavbarConfig, getFooterConfig, getNavigationPresentation } from '@/data/docs'
 import type { NavigationSection } from '@/data/docs'
 import { buildApiNavigation } from '@/data/api-reference'
 import { DocsCodeActionsProvider } from '@/components/docs/code-actions-provider'
@@ -13,9 +15,13 @@ interface DocsLayoutProps {
   children: React.ReactNode
 }
 
+/** Resolve attribution on the server so paid removal never emits footer markup. */
 export default async function DocsLayout({ children }: DocsLayoutProps) {
+  const showPoweredBy = await shouldShowPoweredBy()
+  const contentControls = getBuildContentControls()
   const navigation = await buildApiNavigation()
-  const apiSections: Array<NavigationSection> = navigation.map((group) => ({
+  const apiSections: Array<NavigationSection> = navigation.map((group, index) => ({
+    id: `openapi-${index}`,
     title: group.title,
     items: group.items.map((item) => ({
       id: item.id,
@@ -40,6 +46,7 @@ export default async function DocsLayout({ children }: DocsLayoutProps) {
   const i18nConfig = getBuildI18nConfig()
   const navbarConfig = getNavbarConfig()
   const footerConfig = getFooterConfig()
+  const navigationPresentation = getNavigationPresentation()
   const effectiveSite = resolveBuildSiteConfig()
   const codeReportRepositoryUrl =
     effectiveSite.repoUrl ||
@@ -59,6 +66,9 @@ export default async function DocsLayout({ children }: DocsLayoutProps) {
           i18nConfig={i18nConfig}
           navbarConfig={navbarConfig}
           footerConfig={footerConfig}
+          showPoweredBy={showPoweredBy}
+          showSidebarGroupIcons={contentControls.showSidebarGroupIcons}
+          navigationPresentation={navigationPresentation}
           identity={siteIdentity(effectiveSite)}
         >
           {children}

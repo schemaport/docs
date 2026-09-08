@@ -1,3 +1,5 @@
+/** Edge-safe request gating, machine negotiation, analytics, and cache policy. */
+
 import { NextResponse } from 'next/server'
 import type { NextFetchEvent, NextRequest } from 'next/server'
 import {
@@ -18,8 +20,8 @@ import { createDailyVisitorKey, externalReferrerDomain } from '@/lib/analytics/i
 import { problemResponse } from '@/lib/http/problem'
 
 // Static API paths are known without importing the Node-only content graph.
-// Paths outside this set may still be visual API-reference pages, so browser
-// and RSC navigation bypass the JSON fallback below.
+// Paths outside this set may still be author-owned API-reference pages, so
+// explicit machine requests negotiate through the document projection.
 const PUBLIC_API_PATHS = new Set([
   '/api/access/auth',
   '/api/agent-readiness',
@@ -53,13 +55,32 @@ function isKnownApiPath(pathname: string): boolean {
   )
 }
 
-function isBrowserOrRscNavigation(request: NextRequest): boolean {
-  return (
-    request.headers.get('accept')?.includes('text/html') === true ||
-    request.headers.has('rsc') ||
-    request.headers.has('next-router-state-tree') ||
-    request.headers.has('next-router-prefetch')
-  )
+/**
+ * Identify paths that may resolve to a rendered documentation page.
+ *
+ * API reference pages share the `/api` namespace with service endpoints. The
+ * edge runtime cannot load the Node-only content graph, so unknown paths stay
+ * eligible and the App Router remains responsible for resolving or 404ing
+ * them. Known service endpoints must never advertise page-level discovery.
+ */
+function isPotentialDocsPagePath(pathname: string): boolean {
+  if (pathname.startsWith('/admin') || pathname.startsWith('/_next')) return false
+  if (pathname === '/api' || pathname.startsWith('/api/')) return !isKnownApiPath(pathname)
+  return true
+}
+
+/**
+ * Decide whether a machine request targets a canonical documentation page.
+ *
+ * `/api/*` cannot be treated as API-only: authors may legitimately place MDX
+ * pages there (for example `/api/overview`). Known service endpoints stay
+ * terminal, while every other explicit machine request uses the content
+ * projection and lets that route resolve the page or return its own 404.
+ */
+function shouldNegotiateDocPage(request: NextRequest, pathname: string): boolean {
+  if (!isAgentRequest(request, pathname)) return false
+  if (pathname.startsWith('/api/')) return !isKnownApiPath(pathname)
+  return !isMachineEndpoint(pathname)
 }
 
 function shouldTrackPath(pathname: string): boolean {
@@ -375,24 +396,6 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
     event.waitUntil(sendAnalyticsEvent(request, pathname))
   }
 
-  // The `/api` URL space also contains browser-rendered API-reference pages.
-  // Preserve those pages and every RSC navigation request, while ensuring a
-  // machine client never receives Next's HTML 404 for an unknown API root.
-  if (
-    pathname.startsWith('/api/') &&
-    !isKnownApiPath(pathname) &&
-    !isBrowserOrRscNavigation(request)
-  ) {
-    return problemResponse({
-      status: 404,
-      code: 'api_endpoint_not_found',
-      title: 'API endpoint not found',
-      detail: 'No public API endpoint matches this request path.',
-      resolution: 'Read `/openapi.json` for supported operations or `/api/docs-index` for published pages.',
-      instance: pathname,
-    })
-  }
-
   // `.md` page mirrors rewrite to the markdown API — but /skill.md, /AGENTS.md,
   // /auth.md, and Agent Skills files under /.well-known/ are their own
   // generated routes, so leave them alone.
@@ -426,7 +429,7 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
     return applyManagedContentCacheHeaders(NextResponse.rewrite(url), pathname, contentCachePublic)
   }
 
-  if (isAgentRequest(request, pathname) && !isMachineEndpoint(pathname)) {
+  if (shouldNegotiateDocPage(request, pathname)) {
     const slugPath = pathname === '/' ? 'introduction' : pathname.slice(1)
     const format = request.nextUrl.searchParams.get('format')
     const url = request.nextUrl.clone()
@@ -452,9 +455,10 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
   // agents and crawlers find the index without guessing. The `Link` header stays
   // relative (resolved against the request URL per RFC 8288); `X-Llms-Txt` is a
   // custom header agents read directly, so it carries an absolute URL. Only
-  // content pages get the headers (not API/admin/_next).
+  // potential content pages get the headers, including API-reference pages;
+  // known service APIs, admin routes, and Next internals do not.
   const response = NextResponse.next()
-  if (!pathname.startsWith('/api') && !pathname.startsWith('/admin') && !pathname.startsWith('/_next')) {
+  if (isPotentialDocsPagePath(pathname)) {
     response.headers.append('Link', '</llms.txt>; rel="llms-txt"')
     // Standard relation types agents actually dereference (RFC 8288): the
     // Markdown alternate of the corpus, the OpenAPI description

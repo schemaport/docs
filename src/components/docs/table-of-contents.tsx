@@ -1,8 +1,10 @@
 'use client'
 
+/** Visible document headings and scroll tracking share the page's anchor offsets. */
+
 import { usePathname } from 'next/navigation'
 import { startTransition, useCallback, useEffect, useState } from 'react'
-import { layout, typography } from '@/config/layout'
+import { layout } from '@/config/layout'
 import { cn } from '@/lib/utils'
 
 interface TocItem {
@@ -11,10 +13,10 @@ interface TocItem {
   level: number
 }
 
-// Distance from the top of the viewport (px) at which a heading is considered
-// "active". Matches the scroll-mt offset applied to headings.
+// Preserve the original reading threshold when the header uses a single row.
 const ACTIVE_OFFSET = 120
 
+/** Follow the visible document outline as navigation and scroll position change. */
 export function TableOfContents() {
   const pathname = usePathname()
   const [items, setItems] = useState<Array<TocItem>>([])
@@ -49,7 +51,12 @@ export function TableOfContents() {
 
       let current = headings[0].id
       for (const heading of headings) {
-        if (heading.getBoundingClientRect().top - ACTIVE_OFFSET <= 0) {
+        // A stacked header raises the anchor margin above the normal threshold.
+        // Read the applied margin so a completed anchor scroll stays selected,
+        // including after responsive header changes or custom heading styles.
+        const anchorOffset = Number.parseFloat(getComputedStyle(heading).scrollMarginTop) || 0
+        const activeOffset = Math.max(ACTIVE_OFFSET, anchorOffset)
+        if (heading.getBoundingClientRect().top - activeOffset <= 1) {
           current = heading.id
         } else {
           break
@@ -88,8 +95,8 @@ export function TableOfContents() {
   if (items.length === 0) return null
 
   return (
-    <aside className={cn('thally-docs-toc sticky top-[82px] max-h-[calc(100dvh-82px)] overflow-y-auto text-sm', layout.tocWidth)}>
-      <p className={cn('mb-2.5 font-mono text-[0.68rem] tracking-[0.14em]', typography.meta)}>On this page</p>
+    <aside className={cn('thally-docs-toc sticky top-[calc(var(--docs-header-height,60px)+22px)] max-h-[calc(100dvh-var(--docs-header-height,60px)-22px)] overflow-y-auto text-sm', layout.tocWidth)}>
+      <p className="mb-0 text-sm font-medium leading-6 text-foreground">On this page</p>
       <ul className="border-l border-border">
         {items.map((item) => {
           const isActive = activeId === item.id
@@ -99,10 +106,10 @@ export function TableOfContents() {
                 href={`#${item.id}`}
                 onClick={(event) => handleClick(event, item.id)}
                 className={cn(
-                  '-ml-px flex items-center border-l-2 py-1 pr-2 text-left text-[0.83rem] leading-[1.45] transition-colors duration-200 hover:text-foreground',
+                  '-ml-px flex items-center border-l-2 py-1 pr-2 text-left text-sm font-medium leading-6 transition-colors duration-200 hover:text-foreground',
                   item.level > 2 ? 'pl-7' : 'pl-4',
                   isActive
-                    ? 'border-foreground font-semibold text-foreground'
+                    ? 'border-foreground text-foreground'
                     : 'border-transparent text-foreground/55',
                 )}
               >

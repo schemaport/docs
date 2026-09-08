@@ -13,7 +13,8 @@ export async function LocalizedSidebarHydrator({
   locale,
 }: LocalizedSidebarHydratorProps) {
   const navigation = await buildApiNavigation()
-  const apiSections: Array<NavigationSection> = navigation.map((group) => ({
+  const apiSections: Array<NavigationSection> = navigation.map((group, index) => ({
+    id: `openapi-${index}`,
     title: group.title,
     items: group.items.map((item) => ({
       id: item.id,
@@ -32,14 +33,13 @@ export async function LocalizedSidebarHydrator({
         sections: [...(collection.sections ?? []), ...apiSections],
       }
     }
-    if (!collection.href && collection.id === 'overview') {
-      return { ...collection, href: `/${locale}` }
-    }
+    // Keep collection destinations source-owned. Inventing a locale-root href
+    // for Overview makes its prefix match every page in every other collection.
     if (collection.href && !/^https?:\/\//i.test(collection.href)) {
       return { ...collection, href: `/${locale}${collection.href}` }
     }
     return collection
   })
 
-  return <SidebarCollectionsHydrator collections={collections} />
+  return <SidebarCollectionsHydrator collections={collections} scope={`locale:${locale}`} />
 }

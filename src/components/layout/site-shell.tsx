@@ -1,13 +1,16 @@
+/** Interactive docs shell; server props preserve attribution through hydration. */
+
 'use client'
 
 import { Footer } from '@/components/layout/footer'
 import { TopBar } from '@/components/layout/top-bar'
+import { getHeaderNavigationLayout } from '@/components/navigation/header-layout'
 import { Sidebar } from '@/components/navigation/sidebar'
 import { PageContainer } from '@/components/layout/sections'
 import { layout, shell } from '@/config/layout'
-import type { SidebarCollection, DocsJsonNavbar, DocsJsonFooter } from '@/data/docs'
+import type { SidebarCollection, DocsJsonNavbar, DocsJsonFooter, NavigationPresentation } from '@/data/docs'
 import { useSidebarCollectionsStore } from './sidebar-store'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import { SiteNameProvider } from '@/components/layout/use-site-name'
 import type { SiteIdentity } from '@/lib/site-config'
@@ -17,8 +20,8 @@ export interface I18nConfig {
   locales: Array<{ code: string; label: string }>
 }
 
-function collectionContainsPath(collection: SidebarCollection, pathname: string, currentPath?: string) {
-  if (collection.href && matchesPath(collection.href, pathname)) {
+function collectionContainsPath(collection: SidebarCollection, pathname: string, currentPath?: string, localeRoot?: string) {
+  if (collection.href && (matchesPath(collection.href, pathname, localeRoot) || matchesPath(collection.href, currentPath ?? pathname))) {
     return true
   }
   // API collections own all /api/* routes — check both full pathname and locale-stripped path
@@ -27,18 +30,22 @@ function collectionContainsPath(collection: SidebarCollection, pathname: string,
     return true
   }
   return collection.sections.some((section) =>
-    section.items.some((item) => matchesPath(item.href, pathname)),
+    // Until the locale snapshot hydrates, the root layout still has primary
+    // language hrefs. Those identify the same collection after removing locale.
+    section.items.some((item) => matchesPath(item.href, pathname, localeRoot) || matchesPath(item.href, currentPath ?? pathname)),
   )
 }
 
-function matchesPath(targetHref: string, pathname: string) {
+function matchesPath(targetHref: string, pathname: string, localeRoot?: string) {
   if (!targetHref || /^https?:\/\//i.test(targetHref)) {
     return false
   }
   const normalizedTarget = normalizePath(targetHref)
   const normalizedPath = normalizePath(pathname)
-  if (normalizedTarget === '/') {
-    return normalizedPath === '/'
+  // A translated home link has the same exact-match ownership as `/`; its
+  // locale prefix must not turn it into the parent of every translated page.
+  if (normalizedTarget === '/' || normalizedTarget === localeRoot) {
+    return normalizedPath === normalizedTarget
   }
   return normalizedPath === normalizedTarget || normalizedPath.startsWith(`${normalizedTarget}/`)
 }
@@ -53,27 +60,46 @@ function normalizePath(value: string) {
   return value.endsWith('/') ? value.slice(0, -1) : value
 }
 
+function navigationScopeKey(
+  currentLocale: string,
+  currentPath: string,
+  i18nConfig?: I18nConfig | null,
+) {
+  if (i18nConfig && currentLocale !== i18nConfig.defaultLocale) {
+    return `locale:${currentLocale}`
+  }
+  if (matchesPath('/api', currentPath)) {
+    const specId = currentPath.split('/').filter(Boolean)[1] ?? 'default'
+    return `api:${specId}`
+  }
+  return 'default'
+}
+
 interface SiteShellProps {
   children: React.ReactNode
   initialCollections: Array<SidebarCollection>
   i18nConfig?: I18nConfig | null
   navbarConfig?: DocsJsonNavbar | null
+  showPoweredBy?: boolean
+  showSidebarGroupIcons?: boolean
   footerConfig?: DocsJsonFooter | null
+  navigationPresentation: NavigationPresentation
   identity: SiteIdentity
 }
 
+/** Compose navigation and the shared footer with request-resolved site policy. */
 export function SiteShell({
   children,
   initialCollections,
   i18nConfig,
   navbarConfig,
   footerConfig,
+  showPoweredBy = true,
+  showSidebarGroupIcons = true,
+  navigationPresentation,
   identity,
 }: SiteShellProps) {
-  const hydratedCollections = useSidebarCollectionsStore((state) => state.collections)
-  const collections = hydratedCollections.length > 0 ? hydratedCollections : initialCollections
   const pathname = usePathname()
-  const router = useRouter()
 
   // Derive currentLocale and strip locale prefix from pathname
   let currentLocale = i18nConfig?.defaultLocale ?? 'en'
@@ -88,9 +114,15 @@ export function SiteShell({
       }
     }
   }
+  const scopeKey = navigationScopeKey(currentLocale, currentPath, i18nConfig)
+  const localeRoot = pathname !== currentPath ? `/${currentLocale}` : undefined
+  const hydratedCollections = useSidebarCollectionsStore(
+    (state) => state.collectionsByScope[scopeKey],
+  )
+  const collections = hydratedCollections ?? initialCollections
   const navigableCollections = collections.filter((collection) => collection.sections.length > 0)
   const matchedCollection =
-    navigableCollections.find((collection) => collectionContainsPath(collection, pathname, currentPath)) ??
+    navigableCollections.find((collection) => collectionContainsPath(collection, pathname, currentPath, localeRoot)) ??
     navigableCollections[0] ??
     collections[0]
   // Manual override: set when the user clicks a tab and ignored once navigation
@@ -98,7 +130,7 @@ export function SiteShell({
   const [selectedCollectionId, setSelectedCollectionId] = useState<SidebarCollection['id'] | null>(null)
   const selectedCollection = navigableCollections.find((collection) => collection.id === selectedCollectionId)
   const activeCollection =
-    selectedCollection && collectionContainsPath(selectedCollection, pathname, currentPath)
+    selectedCollection && collectionContainsPath(selectedCollection, pathname, currentPath, localeRoot)
       ? selectedCollection
       : matchedCollection
 
@@ -114,14 +146,15 @@ export function SiteShell({
       (collection) =>
         collection.href &&
         !/^https?:\/\//.test(collection.href) &&
-        (matchesPath(collection.href, pathname) || matchesPath(collection.href, currentPath)),
+        (matchesPath(collection.href, pathname, localeRoot) || matchesPath(collection.href, currentPath)),
     )?.id ?? activeCollection.id
+  const relocatedGithubHref = navbarConfig?.links?.find((link) => link.type === 'github')?.href
 
   // `clip` contains horizontal spill without creating a scroll container,
   // which lets the banner-aware desktop sidebar remain sticky.
   return (
     <SiteNameProvider initialName={identity.name}>
-      <div className="thally-docs-root min-h-screen w-full overflow-x-clip bg-background text-foreground">
+      <div className="thally-docs-root min-h-screen w-full overflow-x-clip bg-background text-foreground" data-navigation={navigationPresentation.display} data-header-layout={getHeaderNavigationLayout(navigationPresentation.display, collections.length)}>
         <TopBar
           collections={collections}
           activeCollectionId={activeTabId}
@@ -129,31 +162,34 @@ export function SiteShell({
             const target = collections.find((collection) => collection.id === id)
             if (!target) return
             setSelectedCollectionId(target.id)
-            const targetHref = target.href
-            const firstHref = target.sections[0]?.items[0]?.href
-            if (targetHref && !matchesPath(targetHref, pathname)) {
-              router.push(targetHref)
-              return
-            }
-            if (firstHref && !collectionContainsPath(target, pathname)) {
-              router.push(firstHref)
-            }
           }}
           activeSections={activeCollection.sections}
+          navigationPresentation={navigationPresentation}
           i18nConfig={i18nConfig ?? null}
           currentLocale={currentLocale}
           currentPath={currentPath}
           navbarConfig={navbarConfig ?? null}
           siteLinks={identity.links}
+          showSidebarGroupIcons={showSidebarGroupIcons}
         />
-        <div className={`thally-docs-shell flex min-h-[calc(100dvh-56px)] w-full ${shell.wrapper}`}>
-          <Sidebar sections={activeCollection.sections} title={activeCollection.label} />
-          <div className="flex min-h-[calc(100dvh-56px)] w-full min-w-0 flex-1 flex-col">
-            <main id="main-content" className="thally-docs-main flex-1 py-[34px] pb-24">
+        <div className={`thally-docs-shell flex min-h-[calc(100dvh-var(--docs-header-height,60px))] w-full ${shell.wrapper}`}>
+          <Sidebar
+            sections={activeCollection.sections}
+            title={activeCollection.label}
+            collections={collections}
+            activeCollectionId={activeCollection.id}
+            onCollectionChange={setSelectedCollectionId}
+            navigationPresentation={navigationPresentation}
+            showGroupIcons={showSidebarGroupIcons}
+          />
+          <div className="flex min-h-[calc(100dvh-var(--docs-header-height,60px))] w-full min-w-0 flex-1 flex-col">
+            <main id="main-content" className="thally-docs-main flex-1 py-10 pb-24">
               <PageContainer className={layout.pageGap}>{children}</PageContainer>
             </main>
             <Footer
               footerConfig={footerConfig ?? null}
+              githubHref={relocatedGithubHref}
+              showPoweredBy={showPoweredBy}
               siteName={identity.name}
               siteLinks={identity.links}
             />

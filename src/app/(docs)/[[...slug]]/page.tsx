@@ -21,6 +21,7 @@ import { buildAgentAlternateLinks } from '@/lib/agent-discovery'
 import { isRemoteContentSource } from '@/lib/content-source'
 import { resolveDocRoute } from '@/lib/i18n/doc-route'
 import { getContentI18nConfig } from '@/lib/i18n/content'
+import { localizeDocNavigation } from '@/lib/i18n/navigation'
 import { localizedPath } from '@/lib/i18n/config'
 import { buildLocaleAlternates } from '@/lib/i18n/metadata'
 import {
@@ -37,9 +38,11 @@ interface PageProps {
 }
 
 export async function generateStaticParams() {
-  // Remote content resolves at request time so managed deployments never bake
-  // the runtime repository's own pages into the customer-facing route table.
-  if (isRemoteContentSource()) return []
+  // Render the optional catch-all root once during the build so the shell
+  // can establish its request boundary. An empty params array would select
+  // on-demand SSG and reject live policy headers at runtime. The dynamic
+  // bailout prevents repository content from being baked into managed pages.
+  if (isRemoteContentSource()) return [{ slug: [] }]
 
   const docs = getDocEntries()
   const i18n = getRepositoryI18nConfig()
@@ -138,7 +141,11 @@ export default async function DocsPage({ params }: PageProps) {
     route.isLocaleRoute && !doc.isFallback
       ? localizedPath(primaryHref, route.locale, i18n.defaultLocale)
       : primaryHref
-  const nav = await loadNavContext(doc.id)
+  const nav = await localizeDocNavigation(
+    await loadNavContext(doc.id),
+    route.isLocaleRoute ? route.locale : i18n.defaultLocale,
+    i18n.defaultLocale,
+  )
   const jsonLd = buildDocPageJsonLd({
     siteUrl,
     siteName: effectiveSite.name,
@@ -195,7 +202,7 @@ export default async function DocsPage({ params }: PageProps) {
     <>
       {localizedNavigation}
       <JsonLdScript data={jsonLd} />
-      <DocLayout doc={doc} locale={contentLocale}>
+      <DocLayout doc={doc} locale={contentLocale} navigation={nav}>
         {localeNotice}
         <Content />
       </DocLayout>

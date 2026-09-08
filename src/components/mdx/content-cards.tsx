@@ -14,7 +14,8 @@ type CardCallout = 'info' | 'success' | 'warning' | 'danger' | 'note' | 'tip' | 
 export interface ContentCardProps {
   title?: string
   href?: string
-  icon?: string
+  /** Mintlify accepts either an icon name or authored inline SVG/JSX. */
+  icon?: string | ReactNode
   iconType?: 'regular' | 'solid' | 'outline'
   /** Theme tone or any valid CSS color for the icon. */
   iconColor?: ContentIconTone | string
@@ -79,7 +80,7 @@ function ContentCardSurface({ kind, title, href, icon, iconType, iconColor, colo
   const content = (
     <article
       className={cn(
-        'thally-docs-card group/card relative flex h-full overflow-hidden rounded-[12px] border border-border bg-background p-5 transition-colors duration-150 hover:border-foreground/25',
+        'thally-docs-card group/card relative flex h-full overflow-hidden rounded-[14px] border border-border bg-background p-5 transition-colors duration-150 hover:border-accent',
         horizontal ? 'flex-row items-start gap-4' : 'flex-col',
         resolvedCallout && calloutClassnames[resolvedCallout],
       )}
@@ -96,11 +97,13 @@ function ContentCardSurface({ kind, title, href, icon, iconType, iconColor, colo
         <div className="flex min-h-6 items-center gap-2.5">
           {icon ? (
             <span className="flex h-7 w-7 shrink-0 items-center justify-center" style={customIconStyle}>
-              <Icon icon={icon} iconType={iconType} className="thally-content-icon h-[18px] w-[18px]" color={customIconStyle?.color} data-content-icon-tone={tone} />
+              {typeof icon === 'string'
+                ? <Icon icon={icon} iconType={iconType} className="thally-content-icon h-[18px] w-[18px]" color={customIconStyle?.color} data-content-icon-tone={tone} />
+                : icon}
             </span>
           ) : null}
-          {title ? <span className="min-w-0 flex-1 text-base font-medium leading-6 text-foreground">{title}</span> : null}
-          {showArrow && !cta ? <ArrowRight className="h-4 w-4 shrink-0 text-foreground/40 transition-transform group-hover/card:translate-x-0.5" aria-hidden="true" /> : null}
+          {title ? <span className="min-w-0 flex-1 font-heading text-base font-semibold leading-6 text-foreground">{title}</span> : null}
+          {showArrow && !cta ? <ArrowRight className="thally-docs-card-arrow h-4 w-4 shrink-0 text-foreground/40 transition group-hover/card:translate-x-[3px] group-hover/card:text-accent" aria-hidden="true" /> : null}
         </div>
         {children ? <div className="prose prose-sm mt-1.5 text-foreground/70 dark:prose-invert">{children}</div> : null}
         {cta ? (
