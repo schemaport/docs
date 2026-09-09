@@ -166,7 +166,7 @@ compilation* is a separate, per-provider question — see the
 | Values | `enum`, `const`, `default`, `examples` |
 | Composition | `anyOf`, `oneOf`, `allOf`, `not` |
 | Metadata | `title`, `description`, `format` |
-| References | `$ref`, `$defs`, `definitions` — parsed and walked, never resolved |
+| References | `$ref`, `$defs`, `definitions` — same-document references are resolved; external, dangling and recursive ones are reported, not followed |
 
 Loading also validates the ones it understands: `required` must list properties
 that are actually declared, `enum` must be a non-empty array, the numeric
@@ -195,14 +195,17 @@ value.
 ## What is deliberately unsupported
 
 <AccordionGroup>
-  <Accordion title="$ref is never resolved">
-`$ref`, `$defs` and `definitions` are parsed and walked, but a reference is never
-followed. Anything that would require following one reports that it could not be
-verified rather than passing silently — value validation says the value could not
-be checked instead of returning a pass.
+  <Accordion title="Only same-document $ref is resolved">
+`$ref` pointing inside the same document is resolved, so a constraint that only
+exists behind a reference is genuinely checked rather than skipped.
 
-**Recursive schemas are therefore not supported.** A schema that refers to itself
-cannot be expressed.
+A reference that **cannot** be resolved — external, dangling or recursive — is
+reported rather than followed: value validation says the value could not be
+verified, and why, instead of returning a pass. Everything around it is still
+checked, so one opaque pointer does not make the whole value unverifiable.
+
+**Recursive schemas remain unsupported.** Recursion is detected and named as the
+reason rather than being followed until something breaks.
   </Accordion>
   <Accordion title="Boolean subschemas are rejected">
 JSON Schema permits `{"properties": {"x": true}}` and `{"items": false}`.
