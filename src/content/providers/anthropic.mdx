@@ -339,12 +339,16 @@ the schema was still accepted.
   <Accordion title="One probe is not evidence about enforcement">
     The probe answers "was this tool definition accepted?", not "does the model
     respect the schema?" One sampled call proves nothing either way. Argument
-    validation also uses core's `validateValue`, which does not resolve `$ref`
-    and does not check `format`.
+    validation uses core's `validateValue`, which resolves same-document `$ref`
+    but reports rather than follows an external, dangling or recursive one, and
+    does not check `format`.
   </Accordion>
   <Accordion title="Rules deliberately not implemented">
-    No recursive-schema rule: recursive schemas are documented as unsupported
-    under strict mode only, which this adapter does not emit. No description or
+    No general recursive-schema rule. Recursive schemas are documented as
+    unsupported under `strict: true`, and SchemaPort does not resolve
+    references, so it cannot tell a recursive local `$ref` from a safe one —
+    `anthropic/strict-local-ref` warns on every local `$ref` under strict
+    rather than claiming a recursion check it does not perform. No description or
     schema size limits, and no maximum tool count: none is documented on the
     Messages API reference or the Tool reference, and inventing one would be a
     fabricated rule. No per-model differences: the default tool-use path is
