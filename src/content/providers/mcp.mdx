@@ -103,10 +103,29 @@ schema is already the answer.
 Key order is fixed at `name`, then `description` when present, then
 `inputSchema`, so repeated compilation serializes byte-identically.
 
-`title`, `outputSchema`, `annotations`, `icons` and `_meta` are never emitted —
-the canonical format has no fields to carry them. All five are optional in MCP,
-so the output is still a valid `Tool`; add them yourself after compiling if your
-server needs them.
+`title`, `outputSchema`, `annotations`, `icons` and `_meta` have no counterpart
+in the canonical format, so they are supplied per call rather than read off the
+tool:
+
+```ts
+compileMcpTool(tool, {
+  metadata: {
+    title: 'Look up order',
+    outputSchema: { type: 'object', properties: { status: { type: 'string' } } },
+    annotations: { readOnlyHint: true },
+  },
+})
+```
+
+`outputSchema` is the consequential one — it is how a server declares that it
+returns `structuredContent`. Metadata is validated before emission: a structural
+problem refuses the compile and names the exact field
+(`metadata.icons[1].src`) rather than letting a client reject the `Tool` later
+with no useful error.
+
+The cost of supplying it per call is that a canonical tool *file* cannot record
+its own metadata, and the CLI does not pass any — so
+`schemaport compile --targets mcp` still emits the three-field form.
 
 ## Compatibility rules
 

@@ -23,7 +23,8 @@ non-enforcement as warnings. Behaviour on this page is owned by
 ## The API surface
 
 The target is the Messages API `tools[]` entry: `name`, optional `description`,
-and `input_schema`. SchemaPort emits the **default, non-strict** form.
+and `input_schema`. SchemaPort emits the **default, non-strict** form unless you
+ask for `strict: true`.
 
 `input_schema` is typed by `@anthropic-ai/sdk` 0.119.0 as an open object —
 `{ type: 'object'; properties?; required?; [k: string]: unknown }` — and the
@@ -31,28 +32,73 @@ Define tools page shows the schema being rendered into the constructed tool-use
 system prompt verbatim. There is no keyword the default request path rejects,
 which is why this adapter drops nothing.
 
-### Why SchemaPort does not emit `strict: true`
+### `strict: true` is opt-in
 
 Setting `strict: true` is the only way Anthropic enforces the schema; it
-constrains sampling to schema-valid output. SchemaPort deliberately does not
-emit it.
+constrains sampling to schema-valid output. It is **off by default**, because
+turning it on costs constraints.
+
+```ts
+compileTool(tool, { strict: true, allowLossy: true })
+```
 
 The strict subset **rejects with a 400** every keyword in the
 `anthropic/constraint-not-enforced` list: `minimum`, `maximum`, `multipleOf`,
 `minLength`, `maxLength`, array constraints beyond `minItems` of 0 or 1, and
-`additionalProperties` set to anything other than `false`. Emitting strict would
-therefore mean dropping those keywords, which is lossy under SchemaPort's rules
-— and would make the `refund_order` example, whose `amount` carries
-`minimum: 0`, refuse to compile without `--allow-lossy`.
+`additionalProperties` set to anything other than `false`. Strict compilation
+drops those keywords, every drop is lossy, and compilation is therefore refused
+unless you also pass `allowLossy`. The `refund_order` example, whose `amount`
+carries `minimum: 0`, is exactly such a case.
+
+|  | Default | `strict: true` |
+| --- | --- | --- |
+| Anthropic validates tool inputs | no | yes |
+| `minimum` / `maxLength` / `maxItems` … | sent, never enforced | **dropped** |
+| Optional properties | stay optional | become required |
+| Open objects and typed maps | preserved | closed |
+| Needs `allowLossy` | never | whenever a rejected keyword is present |
+
+Keywords the documentation classifies neither way — `pattern`, `oneOf`, `not`,
+`prefixItems`, `minProperties`, `maxProperties` — are **kept** under strict, with
+a warning saying SchemaPort cannot tell you whether Anthropic accepts them.
+Dropping a keyword the documentation does not reject would destroy a constraint
+for a reason this package cannot cite.
 
 <Note>
-The trade is explicit rather than hidden. SchemaPort compiles the permissive
-form that carries your whole schema, and reports in `check` that none of it is
-enforced. If you want enforcement for a specific tool, take the compiled output,
-remove the keywords the strict subset rejects, add `additionalProperties: false`
-to every object, and add `strict: true` yourself — knowing exactly which
-constraints you gave up. There is no option on this adapter to do that for you.
+The trade is explicit rather than hidden. The default form carries your whole
+schema and `check` reports that none of it is enforced; the strict form enforces
+what survives and records every drop as a lossy transformation you had to opt
+into. Strict mode is a **library option** — the `schemaport` CLI has no
+`--strict` flag, so `schemaport compile --targets anthropic` still emits the
+default form.
 </Note>
+
+## Prompt caching
+
+Tool definitions sit at the front of the prompt and rarely change, which makes
+them worth caching. `cacheControl` emits the `cache_control` field that turns
+caching on:
+
+```ts
+compileTool(tool, { cacheControl: true })                              // 5m default
+compileTool(tool, { cacheControl: { type: 'ephemeral', ttl: '1h' } })  // extended
+```
+
+`cache_control` marks a **breakpoint**, which caches everything before *and
+including* the tool it sits on — so it belongs on the last stable tool in the
+`tools` array, not on each one. A request may carry at most four breakpoints,
+and a prefix below the model's minimum length is not cached at all. SchemaPort
+compiles one tool at a time and can check neither, so it emits
+`anthropic/cache-control-breakpoint-scope` (info) saying so whenever you ask for
+a breakpoint.
+
+A `ttl` outside the documented `5m`/`1h` is dropped rather than forwarded, with
+`anthropic/cache-control-invalid-ttl` (warning): the API rejects the whole
+request over it, which would cost you the tool definition as well as the
+caching.
+
+Adding a breakpoint destroys no constraint, so it is not lossy and needs no
+`allowLossy`.
 
 ## Compiled output
 
@@ -121,7 +167,8 @@ reason a compatible tool still reports warnings.
 
 Anthropic states it directly on the Strict tool use page: without strict mode,
 Claude might return incompatible types — `"2"` instead of `2` — or omit required
-fields. For a tool compiled by this adapter:
+fields. For a tool compiled in the **default** form — which is what you get
+unless you pass `strict: true`:
 
 | | Sent to Anthropic | Enforced by Anthropic |
 | --- | --- | --- |
@@ -133,6 +180,11 @@ fields. For a tool compiled by this adapter:
 `check` reports this as `anthropic/schema-not-enforced` on every tool whose root
 schema declares at least one property or required property. A genuinely
 unconstrained tool still reports clean. This is a warning, not a clean pass.
+
+Under [`strict: true`](#strict-true-is-opt-in) the table above inverts: what
+survives compilation *is* enforced, and `anthropic/schema-not-enforced` is not
+emitted at all — the statement would simply be false. What you give up is every
+keyword the strict subset rejects.
 
 ## Compatibility rules
 
@@ -198,16 +250,34 @@ Only two conditions produce `ok: false`, and neither is about lossiness:
 
 ## Transformations
 
-Two, both safe. **This provider emits no lossy transformation at all.**
+Eleven. **In the default form none of them is lossy**; every lossy one belongs
+to `strict: true`.
 
-| Code | Path | When |
+### Always, or in either mode
+
+| Code | Lossy | When |
 | --- | --- | --- |
-| `renamed-input-schema-field` | `inputSchema` | Always. The canonical `inputSchema` is emitted as the Messages API field `input_schema`. |
-| `added-input-schema-type` | `inputSchema.type` | Only when the canonical root schema declares no `type`. Adds `"type": "object"`, which the API requires. |
+| `renamed-input-schema-field` | no | Always. The canonical `inputSchema` is emitted as the Messages API field `input_schema`. |
+| `added-input-schema-type` | no | Only when the canonical root schema declares no `type`. Adds `"type": "object"`, which the API requires. |
+| `added-cache-control` | no | Only when `cacheControl` is set. Adds a prompt cache breakpoint. |
 
-Because nothing is ever lossy, `--allow-lossy` has no effect on this target:
+### `strict: true` only
+
+| Code | Lossy | What it does |
+| --- | --- | --- |
+| `enabled-strict-mode` | no | Emits `strict: true`. |
+| `dropped-numeric-constraint` | **yes** | Drops `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`. |
+| `dropped-string-constraint` | **yes** | Drops `minLength`, `maxLength`. |
+| `dropped-array-constraint` | **yes** | Drops `maxItems`, `uniqueItems`, and `minItems` outside 0 and 1. |
+| `dropped-additional-properties-schema` | **yes** | Replaces a typed `additionalProperties` map with `false`. |
+| `closed-open-object` | no | Replaces `additionalProperties: true` with `false`. |
+| `added-additional-properties-false` | no | Adds `additionalProperties: false` where the schema declared nothing. |
+| `required-every-property` | no | Lists every declared property in `required`; the strict subset has no way to express an optional one. |
+
+In the default form nothing is lossy, so `--allow-lossy` has no effect there:
 `compile(tool)` and `compile(tool, { allowLossy: true })` produce byte-identical
-results, and the test suite asserts that for every shared fixture.
+results, and the test suite asserts that for every shared fixture. Under
+`strict: true` it is required whenever a rejected keyword is present.
 
 ## Probing
 
@@ -282,10 +352,15 @@ the schema was still accepted.
     supported and pass through untouched.
   </Accordion>
   <Accordion title="Fields compile cannot emit">
-    `input_examples`, `cache_control`, `defer_loading` and `allowed_callers` are
-    optional tool-definition properties outside SchemaPort's canonical format,
-    so they are never emitted. Add them to the compiled object yourself if you
-    need them.
+    `input_examples`, `defer_loading` and `allowed_callers` are optional
+    tool-definition properties outside SchemaPort's canonical format, so they
+    are never emitted. Add them to the compiled object yourself if you need
+    them.
+
+    `cache_control` is the exception: it is emitted on request, because a tool
+    definition is worth caching and nothing else could turn that on. Pass
+    `cacheControl` to `compile()` — see [Prompt
+    caching](#prompt-caching).
   </Accordion>
 </AccordionGroup>
 

@@ -122,10 +122,16 @@ import { validateValue } from '@schemaport/core'
 const { valid, errors } = validateValue(tool.inputSchema, { orderId: 'ord_1' })
 ```
 
-`$ref` is never resolved: a schema containing one reports that the value could
-not be verified rather than silently passing. Every such error carries
-`UNVERIFIED_MARKER`, so callers can distinguish "not checked" from "checked and
-wrong" without matching on the message text.
+Same-document `$ref` is resolved first, so a constraint that only exists behind
+a reference is genuinely checked: `{ "$ref": "#/$defs/positive" }` against `0`
+reports `below minimum 1`, not a shrug.
+
+A reference that *cannot* be resolved — external, dangling or recursive —
+reports that the value could not be verified, and says why, rather than
+silently passing. Every such error carries `UNVERIFIED_MARKER`, so callers can
+distinguish "not checked" from "checked and wrong" without matching on the
+message text. Everything around an unresolvable reference is still checked; one
+opaque pointer does not make the whole value unverifiable.
 
 ## Check that a schema's own literals are consistent
 
