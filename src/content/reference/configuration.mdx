@@ -34,8 +34,9 @@ command line. Replaces `<path...>`.
 </ParamField>
 
 <ParamField path="targets" type="string[]">
-Default target ids. Replaces `--targets`. Validated exactly like the flag: an
-unknown id exits `2` and lists the valid ids.
+Default target ids. Replaces `--targets`. Accepts `"all"` as a shorthand for
+every target. Validated exactly like the flag: an unknown id exits `2` and lists
+the valid ids, and `"all"` expands the same way.
 </ParamField>
 
 <ParamField path="output" type="string">
