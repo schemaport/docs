@@ -100,13 +100,29 @@ survives, the optional `amount` stays optional, the object stays open. That is
 the whole point of MCP as a target: it speaks JSON Schema, so the canonical
 schema is already the answer.
 
-Key order is fixed at `name`, then `description` when present, then
-`inputSchema`, so repeated compilation serializes byte-identically.
+Key order is fixed, following MCP's own `Tool` declaration — `name`, `title`,
+`description`, `icons`, `inputSchema`, `outputSchema`, `annotations`, `_meta` —
+with absent fields skipped, so repeated compilation serializes byte-identically.
 
-`title`, `outputSchema`, `annotations`, `icons` and `_meta` are never emitted —
-the canonical format has no fields to carry them. All five are optional in MCP,
-so the output is still a valid `Tool`; add them yourself after compiling if your
-server needs them.
+`title`, `outputSchema`, `annotations`, `icons` and `_meta` have no counterpart
+in `CanonicalTool`, so they are supplied per call rather than read off the tool:
+
+```ts
+compileMcpTool(tool, {
+  metadata: {
+    title: 'Look up order',
+    outputSchema: { type: 'object', properties: { status: { type: 'string' } } },
+    annotations: { readOnlyHint: true },
+  },
+});
+```
+
+`outputSchema` is the consequential one: it is how a server declares that it
+returns `structuredContent`. Metadata is validated before emission — a
+structural problem refuses the compile and names the exact field
+(`metadata.icons[1].src`) rather than letting a client reject the `Tool` later
+with no useful error. Without a `metadata` option the output is exactly the
+three-field form shown above.
 
 ## Compatibility rules
 
@@ -115,7 +131,7 @@ All six shared fixtures in `core` — including the open string map, the `anyOf`
 union and the tool carrying `pattern`, `multipleOf` and `minItems` — return
 nothing. That is the correct answer, not a missing check.
 
-Thirteen codes, all prefixed `mcp/`.
+Twenty codes, all prefixed `mcp/`.
 
 ### Tool names
 
@@ -186,28 +202,56 @@ bites over that transport — this adapter still reports it as an error.
 Info rather than warning: compile changes nothing and the keyword is emitted as
 written.
 
+### Metadata rules
+
+These fire only when `compileMcpTool(tool, { metadata })` is given metadata.
+They validate the supplied MCP fields, not the canonical tool.
+
+| Code | Severity | Fires when |
+| --- | --- | --- |
+| `mcp/metadata-title-invalid` | error | `title` is not a string. |
+| `mcp/metadata-output-schema-invalid` | error | `outputSchema` is not an object, or its `$schema` is not a string. |
+| `mcp/metadata-output-schema-empty` | warning | `outputSchema` is `{}`. |
+| `mcp/metadata-annotations-invalid` | error | `annotations` is not an object, its `title` is not a string, or a hint is not a boolean. |
+| `mcp/metadata-annotations-contradictory` | warning | `readOnlyHint: true` together with `destructiveHint: true`. |
+| `mcp/metadata-icons-invalid` | error | An icon is not an object, or `src` / `mimeType` / `sizes` / `theme` is wrong. |
+| `mcp/metadata-meta-invalid` | error | `_meta` is not an object. |
+
+Every error refuses the compile. A malformed `Tool` is rejected by clients at
+`tools/list` time with no useful error, so failing here — where the message can
+name `metadata.icons[1].src` — is the more useful outcome.
+
+The two warnings do not refuse. `{}` is a valid schema and contradictory hints
+still produce a well-formed `Tool`; in both cases what is wrong is the intent,
+not the structure.
+
 ## Transformations
 
-Three, all touching only the root `type`, all `lossy: false`.
+Four, all `lossy: false`. Three touch only the root `type`; the fourth records
+metadata that was attached.
 
 | Code | When | Detail |
 | --- | --- | --- |
 | `added-input-schema-type-object` | Root schema has no `type` | Adds `"type": "object"` |
 | `normalized-input-schema-type-to-object` | Root `type` is `["object"]` | Rewrites it as the literal string |
 | `narrowed-input-schema-type-to-object` | Root `type` is a union containing `"object"` | Narrows to `"object"`, dropping the others |
+| `attached-tool-metadata` | A `metadata` option was given | Names the fields added, in declaration order |
 
 <Note>
-**MCP has no lossy path.** All three transformations make the root type at least
-as strict as it was, and no `minimum`, `pattern`, `enum`,
+**MCP has no lossy path.** The three root-type transformations make the type at
+least as strict as it was, and `attached-tool-metadata` only adds fields —
+nothing in the canonical schema is removed or weakened by declaring an
+`outputSchema` or a `title`. No `minimum`, `pattern`, `enum`,
 `additionalProperties` or composition keyword is ever dropped, rewritten or
 truncated. `compile` therefore never needs `--allow-lossy` for this target, and
 passing it changes nothing.
 </Note>
 
-Compilation is refused — `ok: false`, no output — only for the four errors
-compile cannot work around: `mcp/input-schema-not-object` and the three
-`x-mcp-header` errors. The blocking diagnostics stay in the result so you can
-see why, and `--allow-lossy` does not override any of them; they are not lossy
+Compilation is refused — `ok: false`, no output — for the four input-schema
+errors compile cannot work around (`mcp/input-schema-not-object` and the three
+`x-mcp-header` errors) and for the five metadata errors listed in the metadata
+rules table above. The blocking diagnostics stay in the result so you can see
+why, and `--allow-lossy` does not override any of them; they are not lossy
 transformations, they are things SchemaPort refuses to guess at.
 
 ## Local validation instead of probing
@@ -320,12 +364,13 @@ Neither helper, nor `check`, `compile` or `probe`, makes a network request.
     performing a check. If your client enforces a bound, check against it
     yourself.
   </Accordion>
-  <Accordion title="outputSchema cannot be carried">
-    The canonical format is `name`, optional `description`, `inputSchema`. It
-    has no field for MCP's `outputSchema`, which is a first-class part of a tool
-    definition and constrains `structuredContent`. This is the most consequential
-    gap on this target, and it has been reported upstream rather than worked
-    around locally.
+  <Accordion title="Metadata is per call, not per tool file">
+    `title`, `outputSchema`, `annotations`, `icons` and `_meta` are supplied as
+    a compile option, not stored in the canonical tool. A `.json` tool
+    definition cannot record its own `outputSchema`, so a pipeline that loads
+    tools from disk has to keep the metadata alongside them and pair the two up
+    itself. The `schemaport` CLI does not do that pairing:
+    `schemaport compile --targets mcp` emits the three-field form.
   </Accordion>
   <Accordion title="Only the root $schema is inspected">
     `mcp/non-default-schema-dialect` looks at `inputSchema.$schema`. A `$schema`
