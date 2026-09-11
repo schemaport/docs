@@ -166,16 +166,22 @@ has to exist in code, because nothing upstream will apply it.
 at least one property. It is not a defect in your schema; it is the trade.
 
 <Note>
-  SchemaPort deliberately does not emit `strict: true` for Anthropic. The strict
-  subset returns a 400 for `minimum`, `maximum`, `multipleOf`, `minLength`,
-  `maxLength` and several array constraints, so emitting it would mean silently
-  dropping those keywords — a lossy transformation under SchemaPort's rules. The
-  choice is explicit rather than hidden: the whole schema is sent, and `check`
-  tells you none of it is enforced. If you want strict enforcement for one tool,
-  take the compiled output, remove the keywords the strict subset rejects, add
-  `additionalProperties: false` to every object, and add `strict: true`
-  yourself — knowing exactly which constraints you gave up. There is no flag
-  that does this for you.
+  SchemaPort emits the default, non-strict form unless you ask for enforcement.
+  The strict subset returns a 400 for `minimum`, `maximum`, `multipleOf`,
+  `minLength`, `maxLength` and several array constraints, so emitting it means
+  dropping those keywords — lossy under SchemaPort's rules.
+
+  The choice is explicit rather than hidden. By default the whole schema is sent
+  and `check` tells you none of it is enforced. When you want enforcement, pass
+  `strict: true` and `allowLossy` together:
+
+  ```ts
+  compileTool(tool, { strict: true, allowLossy: true })
+  ```
+
+  Every dropped keyword is recorded as a lossy transformation, so you can see
+  exactly which constraints you gave up. Strict mode is a library option — the
+  CLI has no `--strict` flag.
 </Note>
 
 ### Gemini drops several keywords

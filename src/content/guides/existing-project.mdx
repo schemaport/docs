@@ -90,9 +90,13 @@ Rename `input_schema` to `inputSchema`. That is the entire conversion:
 }
 ```
 
-Drop `cache_control`, `input_examples`, `defer_loading` and `allowed_callers` if
-you use them — they are Anthropic tool-definition properties outside the
-canonical format, and SchemaPort will never emit them.
+Drop `input_examples`, `defer_loading` and `allowed_callers` if you use them —
+they are Anthropic tool-definition properties outside the canonical format, and
+SchemaPort will never emit them.
+
+`cache_control` does not need dropping. It is not part of the canonical format
+either, but `compile()` emits it on request: pass `cacheControl: true` for the
+5-minute cache, or `{ type: 'ephemeral', ttl: '1h' }` for the extended one.
 
 </Tab>
 <Tab title="From OpenAI">

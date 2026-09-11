@@ -160,10 +160,16 @@ Collapsing them would hide the thing that matters most about this target.
   </Accordion>
 </AccordionGroup>
 
-The one constant: **Anthropic never drops anything.** `provider-anthropic` emits
-no lossy transformation at all, so `--allow-lossy` changes nothing on that
-target. The honesty cost is paid in `check`, which reports on every constrained
-tool that the schema is accepted but not validated.
+The one constant: **Anthropic drops nothing in its default form.** Every cell
+above describes that form, where `provider-anthropic` emits no lossy
+transformation and `--allow-lossy` changes nothing. The honesty cost is paid in
+`check`, which reports on every constrained tool that the schema is accepted but
+not validated.
+
+Opting into `strict: true` inverts the trade: what survives is enforced, and the
+keywords the strict subset rejects are dropped as lossy transformations that
+require `allowLossy`. See
+[Anthropic → `strict: true` is opt-in](/providers/anthropic#strict-true-is-opt-in).
 
 ## The two OpenAI evidence tiers
 
